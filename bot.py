@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import urllib.parse
-import random
 
 import discord
 from discord import app_commands
@@ -16,7 +15,7 @@ from aiohttp import web
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID") or 0)
-CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "1556668456315781321")
+CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "JOUW_CLIENT_ID_HIER")
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "JOUW_CLIENT_SECRET_HIER")
 REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "http://localhost:8080/callback")
 PORT = int(os.getenv("PORT", 8080))
@@ -31,10 +30,11 @@ if not TOKEN:
 SERVERNAAM = "Finns Bots"
 KLEUR = 0x5865F2
 STAFF_ROL = "Staff"
-LID_ROL_ID = 1557808209924726889          # Exacte ID voor Lid rol
-NOT_VERIFIED_ROL_ID = 1557808209924726890  # Vervang dit door het exacte ID van Not-Verified (of pas aan indien nodig)
+LID_ROL = "Lid"
 KLANT_ROL = "Klant"
 PREMIUM_KLANT_ROL = "💎 Premium Klant"
+NOT_VERIFIED_ROL = "Not-Verified"
+NOT_VERIFIED_ROL_ID = 1557808209924726890  # Toegevoegd ter voorkoming van ontbrekende variabelen
 TICKET_CATEGORIE = "🎫 ┃ BESTELLEN & SUPPORT"
 
 MEDEDELING_KANAAL_ID = 1556575385284648980
@@ -91,9 +91,6 @@ REGELS = [
 ]
 # --------------------------------------------------------------------------
 
-ACTIEVE_PUZZELS = {}
-VERWERKTE_CODES = set()
-
 
 def embed(titel, beschrijving=None):
     e = discord.Embed(title=titel, description=beschrijving, colour=KLEUR)
@@ -119,12 +116,12 @@ def regels_embed():
 
 def verificatie_embed():
     return embed(
-        "🔒 Veilige OAuth2 Verificatie & Puzzel",
-        "Welkom! Om volledige toegang te krijgen tot de server en de rol te ontvangen, dien je in te loggen via OAuth2 en de puzzel op te lossen.\n\n"
+        "🔒 Veilige OAuth2 Verificatie",
+        "Welkom! Om volledige toegang te krijgen tot de server, dien je de beveiligde OAuth2 verificatie te doorlopen.\n\n"
         "🛡️ **Wat controleert het systeem?**\n"
-        "• Je account moet minimaal **3 dagen oud** zijn.\n"
+        "• Je account moet minimaal **3 dagen oud** zijn (alt-account preventie).\n"
         "• Je mag niet op de server blacklist staan.\n\n"
-        "Klik op de knop hieronder om te starten."
+        "Klik op de knop hieronder om in te loggen via Discord en te verifiëren."
     )
 
 
@@ -276,7 +273,7 @@ def help_embed(staff=False):
         "`/mijnbestellingen`  bekijk jouw aankoopgeschiedenis\n"
         "`/review`  plaats een review na een afgeronde order\n"
         "`/serverinfo`  bekijk statistieken van de server\n"
-        "`/ping`  test de reactiesnelheid de bot",
+        "`/ping`  test de reactiesnelheid van de bot",
     )
     if staff:
         e.add_field(
@@ -304,72 +301,9 @@ class VerifieerOAuthKnop(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Verifieer via OAuth2 & Puzzel", emoji="🧩", style=discord.ButtonStyle.success, custom_id="oauth_verifieer_knop")
+    @discord.ui.button(label="Verifieer via OAuth2", emoji="🔗", style=discord.ButtonStyle.success, custom_id="oauth_verifieer_knop")
     async def verifieer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        puzzel_url = "http://localhost:8080/puzzel"
-        
-        e = embed(
-            "🧩 Verificatie Puzzel",
-            f"Klik op de onderstaande link om de puzzel op te lossen en je rol te ontvangen:\n\n"
-            f"👉 [Los de Puzzel op]({puzzel_url})"
-        )
-        await interaction.response.send_message(embed=e, ephemeral=True)
-
-
-# --------------------------------------------------------------------------
-# AIOHTTP Webserver voor Puzzel & OAuth2 Callback Afhandeling
-# --------------------------------------------------------------------------
-async def handle_puzzel(request):
-    operators = [("+", lambda a, b: a + b), ("-", lambda a, b: a - b), ("*", lambda a, b: a * b)]
-    op_symbool, op_func = random.choice(operators)
-
-    if op_symbool == "-":
-        a = random.randint(5, 15)
-        b = random.randint(1, a)
-    elif op_symbool == "*":
-        a = random.randint(2, 5)
-        b = random.randint(2, 5)
-    else:
-        a = random.randint(1, 10)
-        b = random.randint(1, 10)
-
-    juiste_antwoord = op_func(a, b)
-    
-    import uuid
-    sessie_id = str(uuid.uuid4())
-    ACTIEVE_PUZZELS[sessie_id] = str(juiste_antwoord)
-
-    puzzel_html = f"""
-    <html>
-        <head><title>Verificatie Puzzel</title></head>
-        <body style="background:#1e1f22; color:#fff; font-family:sans-serif; text-align:center; padding-top:80px;">
-            <div style="background:#2b2d31; display:inline-block; padding:40px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.5);">
-                <h2 style="color:#5865F2;">🧠 Beveiligingspuzzel</h2>
-                <p>Los de volgende som op om je lidmaatschap te activeren:</p>
-                <h3 style="color:#fEE75C; font-size:26px;">Hoeveel is {a} {op_symbool} {b}?</h3>
-                <form action="/puzzel_check" method="get">
-                    <input type="hidden" name="sessie" value="{sessie_id}">
-                    <input type="text" name="antwoord" placeholder="Jouw antwoord..." style="padding:10px; font-size:16px; border-radius:5px; border:none; text-align:center; width:200px;" required autocomplete="off">
-                    <br><br>
-                    <button type="submit" style="background:#57F287; color:#000; padding:10px 20px; font-size:16px; font-weight:bold; border:none; border-radius:5px; cursor:pointer;">Verstuur</button>
-                </form>
-            </div>
-        </body>
-    </html>
-    """
-    return web.Response(text=puzzel_html, content_type="text/html")
-
-
-async def handle_puzzel_check(request):
-    sessie_id = request.query.get("sessie", "")
-    antwoord = request.query.get("antwoord", "").strip()
-
-    verwacht_antwoord = ACTIEVE_PUZZELS.get(sessie_id)
-
-    if sessie_id in ACTIEVE_PUZZELS:
-        del ACTIEVE_PUZZELS[sessie_id]
-
-    if verwacht_antwoord and antwoord == verwacht_antwoord:
+        # Dynamische detectie van scheme/host uit de headers van de request of via REDIRECT_URI
         params = {
             "client_id": CLIENT_ID,
             "redirect_uri": REDIRECT_URI,
@@ -377,41 +311,27 @@ async def handle_puzzel_check(request):
             "scope": "identify guilds.join"
         }
         auth_url = f"https://discord.com/api/oauth2/authorize?{urllib.parse.urlencode(params)}"
-        raise web.HTTPFound(auth_url)
-    else:
-        fail_html = """
-        <html>
-            <body style="background:#1e1f22; color:#fff; font-family:sans-serif; text-align:center; padding-top:100px;">
-                <div style="background:#2b2d31; display:inline-block; padding:40px; border-radius:10px;">
-                    <h1 style="color:#ED4245;">❌ Helaas, dat is onjuist!</h1>
-                    <p>Ga terug naar Discord, klik opnieuw op de verificatieknop en probeer het nog eens.</p>
-                </div>
-            </body>
-        </html>
-        """
-        return web.Response(text=fail_html, content_type="text/html")
+        
+        e = embed(
+            "🔐 Beveiligde Verificatie Link",
+            f"Klik op onderstaande knop om je Discord-account te verifiëren via onze beveiligde OAuth2 portal.\n\n"
+            f"👉 [Klik hier om in te loggen en te verifiëren]({auth_url})"
+        )
+        await interaction.response.send_message(embed=e, ephemeral=True)
 
 
+# --------------------------------------------------------------------------
+# AIOHTTP Webserver voor OAuth2 Callback Afhandeling
+# --------------------------------------------------------------------------
 async def handle_oauth_callback(request):
     code = request.query.get("code")
     if not code:
         return web.Response(text="❌ Fout: Geen autorisatiecode ontvangen van Discord.", status=400)
 
-    if code in VERWERKTE_CODES:
-        success_html = """
-        <html>
-            <head><title>Verificatie Voltooid</title></head>
-            <body style="background:#1e1f22; color:#fff; font-family:sans-serif; text-align:center; padding-top:100px;">
-                <div style="background:#2b2d31; display:inline-block; padding:40px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.5);">
-                    <h1 style="color:#57F287;">Verificatie voltooid!</h1>
-                    <p style="font-size:18px; margin-top:20px;">U kunt het web sluiten en verder gaan in discord.</p>
-                </div>
-            </body>
-        </html>
-        """
-        return web.Response(text=success_html, content_type="text/html")
-
-    VERWERKTE_CODES.add(code)
+    # Dynamische redirect URI bepaling voor Railway (X-Forwarded headers)
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "https")
+    forwarded_host = request.headers.get("X-Forwarded-Host", request.host)
+    dynamic_redirect_uri = f"{forwarded_proto}://{forwarded_host}/callback"
 
     token_url = "https://discord.com/api/oauth2/token"
     data = {
@@ -419,28 +339,18 @@ async def handle_oauth_callback(request):
         "client_secret": CLIENT_SECRET,
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": REDIRECT_URI if "localhost" in REDIRECT_URI else dynamic_redirect_uri,
     }
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
     bot_instance = request.app["bot"]
 
     import aiohttp
     async with aiohttp.ClientSession() as session:
         async with session.post(token_url, data=data, headers=headers) as resp:
             if resp.status != 200:
-                success_html = """
-                <html>
-                    <head><title>Verificatie Voltooid</title></head>
-                    <body style="background:#1e1f22; color:#fff; font-family:sans-serif; text-align:center; padding-top:100px;">
-                        <div style="background:#2b2d31; display:inline-block; padding:40px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.5);">
-                            <h1 style="color:#57F287;">Verificatie voltooid!</h1>
-                            <p style="font-size:18px; margin-top:20px;">U kunt het web sluiten en verder gaan in discord.</p>
-                        </div>
-                    </body>
-                </html>
-                """
-                return web.Response(text=success_html, content_type="text/html")
+                resp_text = await resp.text()
+                return web.Response(text=f"❌ Fout bij het verifiëren van je tokens bij Discord: {resp_text}", status=400)
             token_json = await resp.json()
             access_token = token_json.get("access_token")
 
@@ -452,7 +362,6 @@ async def handle_oauth_callback(request):
             user_data = await resp.json()
 
     user_id = int(user_data["id"])
-    username = user_data.get("username", "Onbekend")
     guild = bot_instance.get_guild(GUILD_ID)
 
     if not guild:
@@ -465,53 +374,41 @@ async def handle_oauth_callback(request):
         except Exception:
             return web.Response(text="❌ Je zit nog niet in de Discord-server! Word eerst lid en probeer het opnieuw.", status=400)
 
-    mod_logs = discord.utils.get(guild.text_channels, name="mod-logs")
+    if user_id in SHOP.get("blacklist", []):
+        html_fail = "<h3>❌ Verificatie Mislukt</h3><p>Dit account staat op de blacklist van deze server.</p>"
+        return web.Response(text=html_fail, content_type="text/html")
+
     nu = datetime.now(timezone.utc)
     leeftijd_dagen = (nu - member.created_at).days
-
-    if user_id in SHOP.get("blacklist", []):
-        if mod_logs:
-            await mod_logs.send(embed=embed("🚨 Verificatie Mislukt (Blacklist)", f"Gebruiker {member.mention} (`{username} / {user_id}`) probeerde te verifiëren maar staat op de **blacklist**."))
-        return web.Response(text="<h3>❌ Verificatie Mislukt</h3><p>Je staat op de blacklist van deze server.</p>", content_type="text/html")
-
     if leeftijd_dagen < 3:
-        if mod_logs:
-            await mod_logs.send(embed=embed("🚨 Verificatie Mislukt (Te jong account)", f"Gebruiker {member.mention} (`{username} / {user_id}`) is afgewezen omdat het account te jong is ({leeftijd_dagen} dagen oud)."))
-        return web.Response(text=f"<h3>❌ Verificatie Mislukt</h3><p>Je Discord-account is te jong ({leeftijd_dagen} dagen oud). Minimaal vereist is 3 dagen.</p>", content_type="text/html")
+        html_fail = f"<h3>❌ Verificatie Mislukt</h3><p>Je Discord-account is te nieuw ({leeftijd_dagen} dagen oud). Minimaal vereist is 3 dagen.</p>"
+        return web.Response(text=html_fail, content_type="text/html")
 
-    # Toekennen van de Lid rol via ID en verwijderen van Not-Verified via ID
-    lid_rol = guild.get_role(LID_ROL_ID)
-    not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID)
+    lid_rol = discord.utils.get(guild.roles, name=LID_ROL)
+    not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID) if NOT_VERIFIED_ROL_ID else discord.utils.get(guild.roles, name=NOT_VERIFIED_ROL)
 
     try:
         if lid_rol:
             await member.add_roles(lid_rol)
-        else:
-            print(f"⚠️ Waarschuwing: Lid rol met ID {LID_ROL_ID} niet gevonden!")
-
         if not_verified_rol and not_verified_rol in member.roles:
             await member.remove_roles(not_verified_rol)
         
+        mod_logs = discord.utils.get(guild.text_channels, name="mod-logs")
         if mod_logs:
-            e = embed("✅ Verificatie Geslaagd", f"Gebruiker {member.mention} heeft de puzzel opgelost en de rollen zijn bijgewerkt.")
-            e.add_field(name="Gebruikersnaam", value=username, inline=True)
-            e.add_field(name="User ID", value=str(user_id), inline=True)
-            e.add_field(name="Account Leeftijd", value=f"{leeftijd_dagen} dagen", inline=True)
-            e.colour = 0x57F287
+            e = embed("✅ OAuth2 Verificatie Geslaagd", f"Gebruiker {member.mention} (`{member.id}`) is succesvol geverifieerd via OAuth2.")
+            e.add_field(name="Account Leeftijd", value=f"{leeftijd_dagen} dagen")
             await mod_logs.send(embed=e)
 
     except Exception as e:
-        print(f"❌ Fout bij toewijzen/verwijderen rollen: {e}")
+        print(f"Fout bij toewijzen rollen via OAuth2: {e}")
+        return web.Response(text="❌ Er is een fout opgetreden bij het toekennen van je rollen.", status=500)
 
-    # Exacte succesmelding in de browser
     success_html = """
     <html>
-        <head><title>Verificatie Voltooid</title></head>
+        <head><title>Verificatie Geslaagd</title></head>
         <body style="background:#1e1f22; color:#fff; font-family:sans-serif; text-align:center; padding-top:100px;">
-            <div style="background:#2b2d31; display:inline-block; padding:40px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.5);">
-                <h1 style="color:#57F287;">Verificatie voltooid!</h1>
-                <p style="font-size:18px; margin-top:20px;">U kunt het web sluiten en verder gaan in discord.</p>
-            </div>
+            <h1 style="color:#57F287;">✅ Verificatie Geslaagd!</h1>
+            <p>Je bent succesvol geverifieerd voor de server. Je kunt dit tabblad sluiten en terugkeren naar Discord.</p>
         </body>
     </html>
     """
@@ -684,27 +581,27 @@ class FinnsBot(commands.Bot):
         # Start de aiohttp webserver binnen de event loop van de bot
         self.web_app = web.Application()
         self.web_app["bot"] = self
-        self.web_app.router.add_get("/puzzel", handle_puzzel)
-        self.web_app.router.add_get("/puzzel_check", handle_puzzel_check)
         self.web_app.router.add_get("/callback", handle_oauth_callback)
+        self.web_app.router.add_get("/", lambda r: web.Response(text="Bot OAuth2 webserver is online!", content_type="text/html"))
         
         self.runner = web.AppRunner(self.web_app)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, "0.0.0.0", PORT)
         await self.site.start()
-        print(f"🌐 OAuth2 webserver & willekeurige puzzel gestart op poort {PORT}")
+        print(f"🌐 OAuth2 webserver gestart op poort {PORT}")
 
     async def on_ready(self):
         await self.change_presence(activity=discord.Game(name="Bots verkopen | /help"))
         print(f"🤖 Ingelogd als {self.user} (ID: {self.user.id})")
 
     async def on_member_join(self, member: discord.Member):
-        not_verified_rol = member.guild.get_role(NOT_VERIFIED_ROL_ID)
+        guild = member.guild
+        not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID) if NOT_VERIFIED_ROL_ID else discord.utils.get(guild.roles, name=NOT_VERIFIED_ROL)
         if not_verified_rol:
             try:
                 await member.add_roles(not_verified_rol)
             except discord.Forbidden:
-                print("Kan de rol Not-Verified niet toekennen: zet de bot-rol hoger in de hiërarchie.")
+                print("Kan de rol Not-Verified niet toekennen: zet de bot-rol hoger in de lijst.")
 
     # Geavanceerd Anti-Raid / Anti-Spam Systeem (5+ tags in één bericht)
     async def on_message(self, message: discord.Message):
@@ -927,7 +824,7 @@ async def serverwipe_cmd(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
 
-    not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID)
+    not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID) if NOT_VERIFIED_ROL_ID else discord.utils.get(guild.roles, name=NOT_VERIFIED_ROL)
     staff_rol = discord.utils.get(guild.roles, name=STAFF_ROL)
 
     for member in guild.members:
@@ -939,7 +836,7 @@ async def serverwipe_cmd(interaction: discord.Interaction):
             continue
 
         try:
-            te_verwijderen = [r for r in member.roles if r != guild.default_role and r.id != NOT_VERIFIED_ROL_ID]
+            te_verwijderen = [r for r in member.roles if r != guild.default_role and r.name != NOT_VERIFIED_ROL]
             if te_verwijderen:
                 await member.remove_roles(*te_verwijderen)
             if not_verified_rol and not_verified_rol not in member.roles:
@@ -993,10 +890,10 @@ async def maakserver_cmd(interaction: discord.Interaction):
         except Exception:
             pass
 
-    lid_rol_obj = guild.get_role(LID_ROL_ID)
+    lid_rol_obj = discord.utils.get(guild.roles, name=LID_ROL)
     if not lid_rol_obj:
         try:
-            lid_rol_obj = await guild.create_role(name="Lid", color=discord.Color.blue())
+            lid_rol_obj = await guild.create_role(name=LID_ROL, color=discord.Color.blue())
         except Exception:
             pass
 
@@ -1014,10 +911,10 @@ async def maakserver_cmd(interaction: discord.Interaction):
         except Exception:
             pass
 
-    not_verified_rol_obj = guild.get_role(NOT_VERIFIED_ROL_ID)
+    not_verified_rol_obj = guild.get_role(NOT_VERIFIED_ROL_ID) if NOT_VERIFIED_ROL_ID else discord.utils.get(guild.roles, name=NOT_VERIFIED_ROL)
     if not not_verified_rol_obj:
         try:
-            not_verified_rol_obj = await guild.create_role(name="Not-Verified", color=discord.Color.dark_grey())
+            not_verified_rol_obj = await guild.create_role(name=NOT_VERIFIED_ROL, color=discord.Color.dark_grey())
         except Exception:
             pass
 
