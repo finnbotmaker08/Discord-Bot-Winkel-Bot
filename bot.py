@@ -15,7 +15,7 @@ from aiohttp import web
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID") or 0)
-CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "JOUW_CLIENT_ID_HIER")
+CLIENT_ID = "1556668456315781321"
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "JOUW_CLIENT_SECRET_HIER")
 REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "https://discord-bot-winkel-bot-production.up.railway.app/callback")
 PORT = int(os.getenv("PORT", 8080))
@@ -320,12 +320,41 @@ class VerifieerOAuthKnop(discord.ui.View):
 
 
 # --------------------------------------------------------------------------
-# AIOHTTP Webserver voor OAuth2 Callback Afhandeling
+# AIOHTTP Webserver voor OAuth2 Callback & Puzzel Afhandeling
 # --------------------------------------------------------------------------
 async def handle_oauth_callback(request):
     code = request.query.get("code")
+    antwoord = request.query.get("antwoord")
+    
+    # 1. Toon de beveiligingspuzzel als er nog geen antwoord is ingevoerd
+    if not antwoord:
+        if not code:
+            return web.Response(text="❌ Fout: Geen autorisatiecode ontvangen van Discord.", status=400)
+        
+        puzzle_html = f"""
+        <html>
+            <head><title>Verificatie Puzzel</title></head>
+            <body style="background:#1e1f22; color:#fff; font-family:sans-serif; text-align:center; padding-top:100px;">
+                <h2>🔒 Beveiligingspuzzel</h2>
+                <p>Los de volgende som op om te bewijzen dat je geen robot bent:</p>
+                <form method="get" action="/callback">
+                    <input type="hidden" name="code" value="{code}">
+                    <p style="font-size: 20px; font-weight: bold;">Hoeveel is 5 + 3?</p>
+                    <input type="text" name="antwoord" placeholder="Jouw antwoord" style="padding: 10px; font-size: 16px; border-radius: 5px; border: none;" required>
+                    <br><br>
+                    <button type="submit" style="padding: 10px 20px; font-size: 16px; background: #5865F2; color: white; border: none; border-radius: 5px; cursor: pointer;">Verstuur</button>
+                </form>
+            </body>
+        </html>
+        """
+        return web.Response(text=puzzle_html, content_type="text/html")
+    
+    # 2. Controleer of het puzzelantwoord juist is (5 + 3 = 8)
+    if antwoord.strip() != "8":
+        return web.Response(text="<html><body style='background:#1e1f22; color:#ff5555; font-family:sans-serif; text-align:center; padding-top:100px;'><h2>❌ Fout antwoord!</h2><p>Ga terug en probeer het opnieuw.</p></body></html>", content_type="text/html", status=400)
+
     if not code:
-        return web.Response(text="❌ Fout: Geen autorisatiecode ontvangen van Discord.", status=400)
+        return web.Response(text="❌ Fout: Geen autorisatiecode ontvangen.", status=400)
 
     forwarded_proto = request.headers.get("X-Forwarded-Proto", "https")
     forwarded_host = request.headers.get("X-Forwarded-Host", request.host)
@@ -393,7 +422,7 @@ async def handle_oauth_callback(request):
         
         mod_logs = discord.utils.get(guild.text_channels, name="mod-logs")
         if mod_logs:
-            e = embed("✅ OAuth2 Verificatie Geslaagd", f"Gebruiker {member.mention} (`{member.id}`) is succesvol geverifieerd via OAuth2.")
+            e = embed("✅ OAuth2 Verificatie Geslaagd", f"Gebruiker {member.mention} (`{member.id}`) is succesvol geverifieerd via OAuth2 en de puzzel.")
             e.add_field(name="Account Leeftijd", value=f"{leeftijd_dagen} dagen")
             await mod_logs.send(embed=e)
 
@@ -405,8 +434,8 @@ async def handle_oauth_callback(request):
     <html>
         <head><title>Verificatie Geslaagd</title></head>
         <body style="background:#1e1f22; color:#fff; font-family:sans-serif; text-align:center; padding-top:100px;">
-            <h1 style="color:#57F287;">✅ Verificatie Geslaagd!</h1>
-            <p>Je bent succesvol geverifieerd voor de server. Je kunt dit tabblad sluiten en terugkeren naar Discord.</p>
+            <h1 style="color:#57F287;">✅ Je bent succesvol geverifieerd.</h1>
+            <p>U kunt deze pagina nu sluiten.</p>
         </body>
     </html>
     """
