@@ -129,7 +129,7 @@ def verificatie_embed():
     return embed(
         "🔒 Server Verificatie",
         "Welkom! Om volledige toegang te krijgen tot de server, dien je jezelf te verifiëren.\n\n"
-        "Klik op de knop hieronder om een verificatiebericht in je privéberichten (DM) te ontvangen."
+        "Klik op de knop hieronder om het verificatieproces te starten."
     )
 
 
@@ -341,7 +341,7 @@ class ModeratieActieKnop(discord.ui.View):
 
 
 # --------------------------------------------------------------------------
-# Directe Verificatie Knop in Server (Triggert de DM met reacties)
+# Directe Verificatie Knop in Server (Vangt DM-blokkades netjes op)
 # --------------------------------------------------------------------------
 class VerifieerDiscordKnop(discord.ui.View):
     def __init__(self):
@@ -364,14 +364,55 @@ class VerifieerDiscordKnop(discord.ui.View):
                 "Reageer hieronder met **✅** om je te verifiëren en toegang te krijgen, of met **❌** om te annuleren."
             )
             dm_bericht = await dm_channel.send(embed=e)
-            
-            # Stuur automatisch het vinkje en kruisje als reacties onder het bericht
             await dm_bericht.add_reaction("✅")
             await dm_bericht.add_reaction("❌")
 
             await interaction.response.send_message("📬 Er is een verificatiebericht naar je privéberichten (DM) gestuurd!", ephemeral=True)
         except Exception:
-            await interaction.response.send_message("❌ Kon geen privébericht (DM) sturen. Zorg ervoor dat je DM's open staan voor leden van deze server.", ephemeral=True)
+            # Fallback zodat het ook werkt als iemands DM's gesloten zijn!
+            await interaction.response.send_message(
+                "⚠️ **Kon geen DM sturen!** Je privéberichten staan uit. Klik op de knop hieronder om direct in dit kanaal te verifiëren.",
+                view=FallbackKanaalVerificatieView(guild),
+                ephemeral=True
+            )
+
+
+# Fallback view voor als DM's dicht staan
+class FallbackKanaalVerificatieView(discord.ui.View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=60)
+        self.guild = guild
+
+    @discord.ui.button(label="Verifieer direct hier", emoji="✅", style=discord.ButtonStyle.success)
+    async def direct_verifieer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.user
+        try:
+            nieuwe_rol = self.guild.get_role(LID_ROL_ID)
+            te_verwijderen = [r for r in member.roles if r != self.guild.default_role]
+            if te_verwijderen:
+                await member.remove_roles(*te_verwijderen)
+
+            if nieuwe_rol:
+                await member.add_roles(nieuwe_rol)
+
+            await interaction.response.edit_message(content="✅ Je bent succesvol geverifieerd via het kanaal!", view=None)
+
+            log_kanaal = self.guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
+            if log_kanaal:
+                tijdzone = "UTC / Systeem lokaal"
+                e = embed(
+                    "🛡️ Nieuwe Verificatie Details (Via Kanaal Fallback)",
+                    f"**Naam:** {member.name} (`{member.display_name}`)\n"
+                    f"**Discord ID:** `{member.id}`\n"
+                    f"**Account Aangemaakt:** {discord.utils.format_dt(member.created_at, 'R')}\n"
+                    f"**Tijdzone:** {tijdzone}"
+                )
+                if member.display_avatar:
+                    e.set_thumbnail(url=member.display_avatar.url)
+                
+                await log_kanaal.send(embed=e, view=ModeratieActieKnop(member.id))
+        except Exception as e:
+            await interaction.response.edit_message(content=f"❌ Fout bij verifiëren: {e}", view=None)
 
 
 class BestelSelect(discord.ui.Select):
@@ -514,7 +555,7 @@ class SluitKnop(discord.ui.View):
 
 
 # --------------------------------------------------------------------------
-# Bot Hoofdklasse & Synchronisatie
+# Bot Hoofdklasse & Enkele Synchronisatie (Fix voor dubbele berichten)
 # --------------------------------------------------------------------------
 class FinnsBot(commands.Bot):
     def __init__(self):
@@ -522,7 +563,7 @@ class FinnsBot(commands.Bot):
         intents.members = True
         intents.message_content = True
         intents.guilds = True
-        intents.reactions = True  # Nodig om te luisteren naar emoji reacties
+        intents.reactions = True
         super().__init__(command_prefix="m?", intents=intents)
 
     async def setup_hook(self):
@@ -533,6 +574,7 @@ class FinnsBot(commands.Bot):
         try:
             if GUILD_ID and GUILD_ID != 0:
                 guild = discord.Object(id=GUILD_ID)
+                self.tree.clear_commands(guild=guild)
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)
             print("✅ Slash commando's succesvol gesynchroniseerd voor de server.")
@@ -544,11 +586,9 @@ class FinnsBot(commands.Bot):
         print(f"🤖 Ingelogd als {self.user} (ID: {self.user.id})")
 
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        # Negeer reacties van de bot zelf
         if payload.user_id == self.user.id:
             return
 
-        # Controleer of het in een DM-kanaal is
         if payload.guild_id is not None:
             return
 
@@ -560,21 +600,16 @@ class FinnsBot(commands.Bot):
         if not member or member.bot:
             return
 
-        # Vinkje aangeklikt in DM voor verificatie
         if str(payload.emoji) == "✅":
             try:
                 nieuwe_rol = guild.get_role(LID_ROL_ID)
-
-                # Verwijder oude rollen behalve @everyone
                 te_verwijderen = [r for r in member.roles if r != guild.default_role]
                 if te_verwijderen:
                     await member.remove_roles(*te_verwijderen)
 
-                # Geef de nieuwe geverifieerde rol
                 if nieuwe_rol:
                     await member.add_roles(nieuwe_rol)
 
-                # Stuur log naar logkanaal
                 log_kanaal = guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
                 if log_kanaal:
                     tijdzone = "UTC / Systeem lokaal"
