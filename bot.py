@@ -12,7 +12,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from aiohttp import web
 
-# Laad de .env file (of Railway variables)
+# Laad de .env file
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID") or 0)
@@ -32,7 +32,7 @@ SERVERNAAM = "Finns Bots"
 KLEUR = 0x5865F2
 STAFF_ROL = "Staff"
 LID_ROL_ID = 1557808209924726889          # Exacte ID voor Lid rol
-NOT_VERIFIED_ROL_ID = 1557808209924726890  # Exacte ID voor Not-Verified rol
+NOT_VERIFIED_ROL_ID = 1557808209924726890  # Vervang dit door het exacte ID van Not-Verified (of pas aan indien nodig)
 KLANT_ROL = "Klant"
 PREMIUM_KLANT_ROL = "💎 Premium Klant"
 TICKET_CATEGORIE = "🎫 ┃ BESTELLEN & SUPPORT"
@@ -306,9 +306,7 @@ class VerifieerOAuthKnop(discord.ui.View):
 
     @discord.ui.button(label="Verifieer via OAuth2 & Puzzel", emoji="🧩", style=discord.ButtonStyle.success, custom_id="oauth_verifieer_knop")
     async def verifieer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        parsed_uri = urllib.parse.urlparse(REDIRECT_URI)
-        base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}" if parsed_uri.netloc else "http://localhost:8080"
-        puzzel_url = f"{base_url}/puzzel"
+        puzzel_url = "http://localhost:8080/puzzel"
         
         e = embed(
             "🧩 Verificatie Puzzel",
@@ -481,6 +479,7 @@ async def handle_oauth_callback(request):
             await mod_logs.send(embed=embed("🚨 Verificatie Mislukt (Te jong account)", f"Gebruiker {member.mention} (`{username} / {user_id}`) is afgewezen omdat het account te jong is ({leeftijd_dagen} dagen oud)."))
         return web.Response(text=f"<h3>❌ Verificatie Mislukt</h3><p>Je Discord-account is te jong ({leeftijd_dagen} dagen oud). Minimaal vereist is 3 dagen.</p>", content_type="text/html")
 
+    # Toekennen van de Lid rol via ID en verwijderen van Not-Verified via ID
     lid_rol = guild.get_role(LID_ROL_ID)
     not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID)
 
@@ -504,6 +503,7 @@ async def handle_oauth_callback(request):
     except Exception as e:
         print(f"❌ Fout bij toewijzen/verwijderen rollen: {e}")
 
+    # Exacte succesmelding in de browser
     success_html = """
     <html>
         <head><title>Verificatie Voltooid</title></head>
@@ -657,6 +657,9 @@ class SluitKnop(discord.ui.View):
         await kanaal.delete()
 
 
+# --------------------------------------------------------------------------
+# Bot Hoofdklasse, Anti-Raid & Webserver Startup
+# --------------------------------------------------------------------------
 class FinnsBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -672,14 +675,13 @@ class FinnsBot(commands.Bot):
         
         if GUILD_ID:
             guild = discord.Object(id=GUILD_ID)
-            self.tree.clear_commands(guild=guild)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
         else:
-            self.tree.clear_commands(guild=None)
             await self.tree.sync()
         print("✅ Slash commando's succesvol gesynchroniseerd.")
 
+        # Start de aiohttp webserver binnen de event loop van de bot
         self.web_app = web.Application()
         self.web_app["bot"] = self
         self.web_app.router.add_get("/puzzel", handle_puzzel)
@@ -704,6 +706,7 @@ class FinnsBot(commands.Bot):
             except discord.Forbidden:
                 print("Kan de rol Not-Verified niet toekennen: zet de bot-rol hoger in de hiërarchie.")
 
+    # Geavanceerd Anti-Raid / Anti-Spam Systeem (5+ tags in één bericht)
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
@@ -762,6 +765,9 @@ async def on_app_command_completion(interaction: discord.Interaction, command: a
             await log_kanaal.send(embed=e)
 
 
+# --------------------------------------------------------------------------
+# Commands
+# --------------------------------------------------------------------------
 @tree.command(name="help", description="Toon alle beschikbare commando's")
 async def help_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(embed=help_embed(is_staff(interaction.user)), ephemeral=True)
@@ -839,6 +845,9 @@ async def setup_embeds_cmd(interaction: discord.Interaction):
     await interaction.followup.send(tekst, ephemeral=True)
 
 
+# --------------------------------------------------------------------------
+# Server Lockdown, Maakserver & Serverwipe
+# --------------------------------------------------------------------------
 def mag_shutdown(member) -> bool:
     return any(rol.id == SHUTDOWN_ROL_ID for rol in member.roles)
 
@@ -1141,6 +1150,9 @@ async def maakserver_cmd(interaction: discord.Interaction):
             print(f"Fout bij maken van kanaal/categorie: {e}")
 
 
+# --------------------------------------------------------------------------
+# Winkel & Klant Commands
+# --------------------------------------------------------------------------
 @tree.command(name="shop", description="Open de winkel en kies een bot")
 async def shop_cmd(interaction: discord.Interaction):
     if not SHOP["producten"]:
@@ -1202,6 +1214,9 @@ async def review_cmd(
     await interaction.response.send_message("Bedankt voor je review! 💙", ephemeral=True)
 
 
+# --------------------------------------------------------------------------
+# Staff Beheer Commands
+# --------------------------------------------------------------------------
 @tree.command(name="product_toevoegen", description="Voeg een bot toe aan de winkel (staff)")
 @app_commands.describe(naam="Naam van de bot", omschrijving="Beschrijving", prijs="Prijs in euro")
 async def product_toevoegen_cmd(interaction: discord.Interaction, naam: str, omschrijving: str, prijs: float):
@@ -1431,5 +1446,5 @@ async def shopstats_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(embed=e, ephemeral=True)
 
 
-client = FinnsBot()
+# Start de bot
 client.run(TOKEN)
