@@ -345,7 +345,7 @@ class ModeratieActieKnop(discord.ui.View):
 # --------------------------------------------------------------------------
 class DMVerificatieReactieView(discord.ui.View):
     def __init__(self, guild: discord.Guild, member: discord.Member):
-        super().__init__(timeout=300) # 5 minuten tijd om te reageren
+        super().__init__(timeout=300)
         self.guild = guild
         self.member = member
 
@@ -356,23 +356,21 @@ class DMVerificatieReactieView(discord.ui.View):
             return
 
         try:
-            # Haal actuele member op uit de guild
             guild_member = self.guild.get_member(self.member.id) or await self.guild.fetch_member(self.member.id)
             nieuwe_rol = self.guild.get_role(LID_ROL_ID)
-            not_verified_rol = self.guild.get_role(NOT_VERIFIED_ROL_ID) if NOT_VERIFIED_ROL_ID else discord.utils.get(self.guild.roles, name=NOT_VERIFIED_ROL)
 
             # Verwijder alle oude rollen behalve @everyone
             te_verwijderen = [r for r in guild_member.roles if r != self.guild.default_role]
             if te_verwijderen:
                 await guild_member.remove_roles(*te_verwijderen)
 
-            # Geef de nieuwe rol
+            # Geef pas hier de nieuwe geverifieerde rol
             if nieuwe_rol:
                 await guild_member.add_roles(nieuwe_rol)
 
             await interaction.response.edit_message(content="✅ Je bent succesvol geverifieerd! Je hebt nu toegang tot de server.", view=None)
 
-            # Stuur log naar kanaal 1557822081528369287
+            # Stuur log naar het opgegeven logkanaal ID
             log_kanaal = self.guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
             if log_kanaal:
                 tijdzone = "UTC / Systeem lokaal"
@@ -416,7 +414,6 @@ class VerifieerDiscordKnop(discord.ui.View):
             return
 
         try:
-            # Probeer een DM te sturen
             dm_channel = await member.create_dm()
             e = embed(
                 "🔒 Server Verificatie",
