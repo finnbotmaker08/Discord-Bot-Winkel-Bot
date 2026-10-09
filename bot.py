@@ -120,7 +120,7 @@ def verificatie_embed():
     return embed(
         "🔒 Veilige OAuth2 Verificatie & Puzzel",
         "Welkom! Om volledige toegang te krijgen tot de server en de rol te ontvangen, dien je in te loggen via OAuth2 en de puzzel op te lossen.\n\n"
-        "🛡️ **Wat controleert het systeem?**\n"
+        "🛡️ **What controleert het systeem?**\n"
         "• Je account moet minimaal **3 dagen oud** zijn.\n"
         "• Je mag niet op de server blacklist staan.\n\n"
         "Klik op de knop hieronder om te starten."
@@ -285,6 +285,7 @@ def help_embed(staff=False):
                 "`/afronden`  bestelling afronden & klant-rol toekennen\n"
                 "`/annuleren`  bestelling annuleren\n"
                 "`/serverwipe`  wist alle berichten, behoudt kanalen & reset rollen naar Not-Verified\n"
+                "`/setup-verificatie`  stuur het verificatiepaneel\n"
                 "`/product_toevoegen`, `/product_bewerken`, `/product_verwijderen`\n"
                 "`/blacklist`, `/verwijderblacklist`\n"
                 "`/kortingscode_maken`, `/kortingscodes`, `/kortingscode_verwijderen`\n"
@@ -815,6 +816,14 @@ async def serverinfo_cmd(interaction: discord.Interaction):
 @tree.command(name="ping", description="Test de reactiesnelheid van de bot")
 async def ping_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(f"🏓 Pong! Latency is {round(client.latency * 1000)} ms")
+
+
+@tree.command(name="setup-verificatie", description="Stuur het verificatiebericht met de knop (Admin)")
+@app_commands.default_permissions(administrator=True)
+async def setup_verificatie_cmd(interaction: discord.Interaction):
+    e = verificatie_embed()
+    await interaction.channel.send(embed=e, view=VerifieerOAuthKnop())
+    await interaction.response.send_message("Verificatiepaneel succesvol verzonden in dit kanaal!", ephemeral=True)
 
 
 @tree.command(name="setup_embeds", description="Plaats welkomst- en infobereichten in de kanalen (admin)")
