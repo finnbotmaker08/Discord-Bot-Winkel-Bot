@@ -341,64 +341,7 @@ class ModeratieActieKnop(discord.ui.View):
 
 
 # --------------------------------------------------------------------------
-# DM Reactie Verificatie View (Vinkje & Kruisje)
-# --------------------------------------------------------------------------
-class DMVerificatieReactieView(discord.ui.View):
-    def __init__(self, guild: discord.Guild, member: discord.Member):
-        super().__init__(timeout=300)
-        self.guild = guild
-        self.member = member
-
-    @discord.ui.button(label="Verifiëren", emoji="✅", style=discord.ButtonStyle.success)
-    async def bevestig_verificatie(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.member.id:
-            await interaction.response.send_message("Dit is niet jouw verificatiebericht.", ephemeral=True)
-            return
-
-        try:
-            guild_member = self.guild.get_member(self.member.id) or await self.guild.fetch_member(self.member.id)
-            nieuwe_rol = self.guild.get_role(LID_ROL_ID)
-
-            # Verwijder alle oude rollen behalve @everyone
-            te_verwijderen = [r for r in guild_member.roles if r != self.guild.default_role]
-            if te_verwijderen:
-                await guild_member.remove_roles(*te_verwijderen)
-
-            # Geef pas hier de nieuwe geverifieerde rol
-            if nieuwe_rol:
-                await guild_member.add_roles(nieuwe_rol)
-
-            await interaction.response.edit_message(content="✅ Je bent succesvol geverifieerd! Je hebt nu toegang tot de server.", view=None)
-
-            # Stuur log naar het opgegeven logkanaal ID
-            log_kanaal = self.guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
-            if log_kanaal:
-                tijdzone = "UTC / Systeem lokaal"
-                e = embed(
-                    "🛡️ Nieuwe Verificatie Details",
-                    f"**Naam:** {guild_member.name} (`{guild_member.display_name}`)\n"
-                    f"**Discord ID:** `{guild_member.id}`\n"
-                    f"**Account Aangemaakt:** {discord.utils.format_dt(guild_member.created_at, 'R')}\n"
-                    f"**Tijdzone:** {tijdzone}"
-                )
-                if guild_member.display_avatar:
-                    e.set_thumbnail(url=guild_member.display_avatar.url)
-                
-                await log_kanaal.send(embed=e, view=ModeratieActieKnop(guild_member.id))
-
-        except Exception as e:
-            await interaction.response.edit_message(content=f"❌ Er is een fout opgetreden bij het toekennen van de rollen: {e}", view=None)
-
-    @discord.ui.button(label="Annuleren", emoji="❌", style=discord.ButtonStyle.danger)
-    async def annuleer_verificatie(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.member.id:
-            await interaction.response.send_message("Dit is niet jouw verificatiebericht.", ephemeral=True)
-            return
-        await interaction.response.edit_message(content="❌ Verificatie geannuleerd.", view=None)
-
-
-# --------------------------------------------------------------------------
-# Directe Verificatie Knop in Server (Triggert de DM)
+# Directe Verificatie Knop in Server (Triggert de DM met reacties)
 # --------------------------------------------------------------------------
 class VerifieerDiscordKnop(discord.ui.View):
     def __init__(self):
@@ -418,9 +361,14 @@ class VerifieerDiscordKnop(discord.ui.View):
             e = embed(
                 "🔒 Server Verificatie",
                 f"Welkom bij **{SERVERNAAM}**!\n\n"
-                "Klik hieronder op het vinkje (`✅`) om je verificatie te voltooien en toegang te krijgen tot de server."
+                "Reageer hieronder met **✅** om je te verifiëren en toegang te krijgen, of met **❌** om te annuleren."
             )
-            await dm_channel.send(embed=e, view=DMVerificatieReactieView(guild, member))
+            dm_bericht = await dm_channel.send(embed=e)
+            
+            # Stuur automatisch het vinkje en kruisje als reacties onder het bericht
+            await dm_bericht.add_reaction("✅")
+            await dm_bericht.add_reaction("❌")
+
             await interaction.response.send_message("📬 Er is een verificatiebericht naar je privéberichten (DM) gestuurd!", ephemeral=True)
         except Exception:
             await interaction.response.send_message("❌ Kon geen privébericht (DM) sturen. Zorg ervoor dat je DM's open staan voor leden van deze server.", ephemeral=True)
@@ -574,6 +522,7 @@ class FinnsBot(commands.Bot):
         intents.members = True
         intents.message_content = True
         intents.guilds = True
+        intents.reactions = True  # Nodig om te luisteren naar emoji reacties
         super().__init__(command_prefix="m?", intents=intents)
 
     async def setup_hook(self):
@@ -593,6 +542,64 @@ class FinnsBot(commands.Bot):
     async def on_ready(self):
         await self.change_presence(activity=discord.Game(name="Bots verkopen | /help"))
         print(f"🤖 Ingelogd als {self.user} (ID: {self.user.id})")
+
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        # Negeer reacties van de bot zelf
+        if payload.user_id == self.user.id:
+            return
+
+        # Controleer of het in een DM-kanaal is
+        if payload.guild_id is not None:
+            return
+
+        guild = self.get_guild(GUILD_ID)
+        if not guild:
+            return
+
+        member = guild.get_member(payload.user_id) or await guild.fetch_member(payload.user_id)
+        if not member or member.bot:
+            return
+
+        # Vinkje aangeklikt in DM voor verificatie
+        if str(payload.emoji) == "✅":
+            try:
+                nieuwe_rol = guild.get_role(LID_ROL_ID)
+
+                # Verwijder oude rollen behalve @everyone
+                te_verwijderen = [r for r in member.roles if r != guild.default_role]
+                if te_verwijderen:
+                    await member.remove_roles(*te_verwijderen)
+
+                # Geef de nieuwe geverifieerde rol
+                if nieuwe_rol:
+                    await member.add_roles(nieuwe_rol)
+
+                # Stuur log naar logkanaal
+                log_kanaal = guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
+                if log_kanaal:
+                    tijdzone = "UTC / Systeem lokaal"
+                    e = embed(
+                        "🛡️ Nieuwe Verificatie Details",
+                        f"**Naam:** {member.name} (`{member.display_name}`)\n"
+                        f"**Discord ID:** `{member.id}`\n"
+                        f"**Account Aangemaakt:** {discord.utils.format_dt(member.created_at, 'R')}\n"
+                        f"**Tijdzone:** {tijdzone}"
+                    )
+                    if member.display_avatar:
+                        e.set_thumbnail(url=member.display_avatar.url)
+                    
+                    await log_kanaal.send(embed=e, view=ModeratieActieKnop(member.id))
+
+            except Exception as e:
+                print(f"Fout bij verwerken DM reactie verificatie: {e}")
+
+        elif str(payload.emoji) == "❌":
+            try:
+                user = await self.fetch_user(payload.user_id)
+                dm_channel = await user.create_dm()
+                await dm_channel.send("❌ Verificatie geannuleerd.")
+            except Exception:
+                pass
 
     async def on_member_join(self, member: discord.Member):
         guild = member.guild
