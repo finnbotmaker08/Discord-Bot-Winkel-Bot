@@ -24,8 +24,8 @@ if not TOKEN:
 SERVERNAAM = "Finns Bots"
 KLEUR = 0x5865F2
 STAFF_ROL = "Staff"
-LID_ROL_ID = 1557813756288045229         # De geverifieerde rol ID
-NOT_VERIFIED_ROL_ID = 1557808209924726889 # De non-verified rol ID
+LID_ROL_ID = 1557813756288045229          # De geverifieerde rol ID
+NOT_VERIFIED_ROL_ID = 557808209924726889  # De non-verified rol ID
 TICKET_CATEGORIE = "🎫 ┃ BESTELLEN & SUPPORT"
 VERIFICATIE_LOG_KANAAL_ID = 1557822081528369287
 
@@ -68,8 +68,12 @@ STANDAARD_SHOP_DATA = {
     "producten": VASTE_PRODUCTEN,
     "bestellingen": [],
     "kortingscodes": {
-        "OPENING": 25
+        "OPENING": {
+            "procent": 25,
+            "verloopt": "31-12-2026"
+        }
     },
+    "actieve_claims": {},
     "blacklist": [],
     "volgend_product": 4,
     "volgende_bestelling": 1
@@ -146,8 +150,13 @@ def laad_shop():
             if isinstance(geladen, dict):
                 data = geladen
                 data["producten"] = VASTE_PRODUCTEN
+                if "actieve_claims" not in data:
+                    data["actieve_claims"] = {}
                 if "blacklist" not in data:
                     data["blacklist"] = []
+                for k, v in list(data["kortingscodes"].items()):
+                    if isinstance(v, (int, float)):
+                        data["kortingscodes"][k] = {"procent": v, "verloopt": "Onbekend"}
         except Exception:
             pass
     return data
@@ -192,6 +201,28 @@ async def staff_check(interaction):
     return False
 
 
+def haal_gebruiker_korting(user_id):
+    claims = SHOP.get("actieve_claims", {})
+    code = claims.get(str(user_id))
+    if not code:
+        return 0, None
+    
+    code_info = SHOP["kortingscodes"].get(code)
+    if not code_info:
+        return 0, None
+        
+    verloopt_str = code_info.get("verloopt")
+    if verloopt_str and verloopt_str != "Onbekend":
+        try:
+            verloop_datum = datetime.strptime(verloopt_str, "%d-%m-%Y").replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > verloop_datum:
+                return 0, None
+        except Exception:
+            pass
+            
+    return code_info["procent"], code
+
+
 def maak_bestelling(user, product, procent, code, ticket_kanaal_id):
     prijs = round(product["prijs"] * (100 - procent) / 100, 2)
     b = {
@@ -215,9 +246,17 @@ def maak_bestelling(user, product, procent, code, ticket_kanaal_id):
     return b
 
 
-def product_embed(p):
+def product_embed(p, user_id):
+    procent, _ = haal_gebruiker_korting(user_id)
+    prijs = p["prijs"]
+    if procent > 0:
+        nieuwe_prijs = round(prijs * (100 - procent) / 100, 2)
+        prijs_tekst = f"~~{euro(prijs)}~~ **{euro(nieuwe_prijs)}** ({procent}% korting toegepast)"
+    else:
+        prijs_tekst = euro(prijs)
+        
     e = embed(p["naam"], p["omschrijving"])
-    e.add_field(name="Prijs", value=euro(p["prijs"]))
+    e.add_field(name="Prijs", value=prijs_tekst)
     return e
 
 
@@ -242,21 +281,41 @@ async def log_bestelling(guild, e):
         await kanaal.send(embed=e)
 
 
-def bots_embed(titel="🤖 Ons Bot-assortiment"):
+def bots_embed(titel="🤖 Ons Bot-assortiment", user_id=None):
     if not SHOP["producten"]:
         return embed(titel, "Momenteel zijn er geen producten beschikbaar.")
-    e = embed(titel, "Ontdek onze hoogwaardige custom bots en pakketten:")
+    
+    procent, actieve_code = haal_gebruiker_korting(user_id) if user_id else (0, None)
+    titel_extra = f" (Actieve korting: {procent}% via `{actieve_code}`)" if procent > 0 else ""
+    
+    e = embed(titel + titel_extra, "Ontdek onze hoogwaardige custom bots en pakketten:")
     for p in SHOP["producten"]:
-        e.add_field(name=f"{p['naam']}", value=f"Prijs: **{euro(p['prijs'])}**\n_{p['omschrijving']}_", inline=False)
+        prijs = p["prijs"]
+        if procent > 0:
+            nieuwe_prijs = round(prijs * (100 - procent) / 100, 2)
+            prijs_str = f"~~{euro(prijs)}~~ **{euro(nieuwe_prijs)}**"
+        else:
+            prijs_str = f"**{euro(prijs)}**"
+            
+        e.add_field(name=f"{p['naam']}", value=f"Prijs: {prijs_str}\n_{p['omschrijving']}_", inline=False)
     return e
 
 
-def prijzen_embed():
+def prijzen_embed(user_id=None):
     if not SHOP["producten"]:
         return embed("💶 Prijzenlijst", "Geen producten gevonden.")
+        
+    procent, _ = haal_gebruiker_korting(user_id) if user_id else (0, None)
     e = embed("💶 Prijzenlijst", "Transparante prijzen voor al onze diensten en bots:")
     for p in SHOP["producten"]:
-        e.add_field(name=f"{p['naam']}", value=f"**{euro(p['prijs'])}**\n{p['omschrijving']}", inline=False)
+        prijs = p["prijs"]
+        if procent > 0:
+            nieuwe_prijs = round(prijs * (100 - procent) / 100, 2)
+            prijs_str = f"~~{euro(prijs)}~~ **{euro(nieuwe_prijs)}** ({procent}% korting)"
+        else:
+            prijs_str = f"**{euro(prijs)}**"
+            
+        e.add_field(name=f"{p['naam']}", value=f"{prijs_str}\n{p['omschrijving']}", inline=False)
     return e
 
 
@@ -266,6 +325,7 @@ def help_embed(staff=False):
         "`/shop`  open de winkel en bekijk de bots\n"
         "`/bots`  bekijk direct alle beschikbare bots\n"
         "`/prijzen`  bekijk het prijzenoverzicht\n"
+        "`/claimkorting <code>`  claim een actieve kortingscode\n"
         "`/bestellen`  scroll door het menu en open direct een bestelticket\n"
         "`/mijnbestellingen`  bekijk jouw aankoopgeschiedenis\n"
         "`/review`  plaats een review na een afgeronde order\n"
@@ -276,6 +336,7 @@ def help_embed(staff=False):
         e.add_field(
             name="🔒 Staff Beheerdersmenu",
             value=(
+                "`/createkortingscode <code> <procent> <dd-mm-jjjj>`  maak code met vervaldatum\n"
                 "`/joinlogs-setup`  stel het joinlogs kanaal in\n"
                 "`/joinlogs-enable`  zet joinlogs aan\n"
                 "`/joinlogs-disable`  zet joinlogs uit\n"
@@ -284,11 +345,8 @@ def help_embed(staff=False):
                 "`/afronden`  bestelling afronden & klant-rol toekennen\n"
                 "`/annuleren`  bestelling annuleren\n"
                 "`/serverwipe`  wist alle berichten, behoudt kanalen & reset rollen\n"
-                "`/product_toevoegen`, `/product_bewerken`, `/product_verwijderen`\n"
                 "`/blacklist`, `/verwijderblacklist`\n"
-                "`/kortingscode_maken`, `/kortingscodes`, `/kortingscode_verwijderen`\n"
-                "`/shopstats`  gedetailleerde omzet en statistieken\n"
-                "`/maakserver`, `/shutdown`, `/startup`, `/verificatie-setup`, `/setup_embeds`"
+                "`/shutdown`, `/startup`, `/verificatie-setup`, `/setup_embeds`"
             ),
             inline=False,
         )
@@ -354,14 +412,12 @@ class DMVerificatieKnopView(discord.ui.View):
                 await interaction.response.edit_message(content="❌ Fout: De geverifieerde rol kan niet worden gevonden in de server.", view=None)
                 return
 
-            # Verwijder ENKEL de Not-Verified rol (indien aanwezig)
             if not_verified_rol and not_verified_rol in guild_member.roles:
                 try:
                     await guild_member.remove_roles(not_verified_rol, reason="Verificatie voltooid: Not-Verified rol verwijderd")
                 except Exception as ex:
                     print(f"⚠️ Kon Not-Verified rol niet verwijderen: {ex}")
 
-            # Voeg de geverifieerde rol toe
             try:
                 await guild_member.add_roles(nieuwe_rol, reason="Server Verificatie voltooid")
             except Exception as ex:
@@ -369,16 +425,13 @@ class DMVerificatieKnopView(discord.ui.View):
                 await interaction.response.edit_message(content="❌ Kan de rol niet toekennen. Zorg dat de bot-rol hoger staat dan de geverifieerde rol!", view=None)
                 return
 
-            # Bewerk het originele knoppenbericht zodat de knoppen verdwijnen
             await interaction.response.edit_message(content="🔒 Verificatieproces afgerond.", view=None)
 
-            # Stuur een gloednieuw succesbericht in de DM's van de gebruiker
             try:
                 await interaction.user.send("✅ Je bent succesvol geverifieerd! Je hebt nu toegang tot de server.")
             except Exception:
                 pass
 
-            # Stuur log naar logkanaal
             log_kanaal = self.guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
             if log_kanaal:
                 tijdzone = "UTC / Systeem lokaal"
@@ -490,7 +543,7 @@ class FallbackKanaalVerificatieView(discord.ui.View):
 
 
 class BestelSelect(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, user_id):
         opties = [
             discord.SelectOption(
                 label=p["naam"][:100],
@@ -500,6 +553,7 @@ class BestelSelect(discord.ui.Select):
             for p in SHOP["producten"][:25]
         ]
         super().__init__(placeholder="📜 Scroll en selecteer een gewenst pakket...", options=opties)
+        self.user_id = user_id
 
     async def callback(self, interaction: discord.Interaction):
         product = vind_product_id(int(self.values[0]))
@@ -507,14 +561,15 @@ class BestelSelect(discord.ui.Select):
             await interaction.response.send_message("Dit product is inmiddels niet meer beschikbaar.", ephemeral=True)
             return
         await interaction.response.send_message(
-            embed=product_embed(product), view=KoopDezeKnop(product["id"]), ephemeral=True
+            embed=product_embed(product, self.user_id), view=KoopDezeKnop(product["id"]), ephemeral=True
         )
 
 
 class BestelShopView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, user_id):
         super().__init__(timeout=600)
-        self.add_item(BestelSelect())
+        self.user_id = user_id
+        self.add_item(BestelSelect(user_id))
 
 
 class KoopDezeKnop(discord.ui.View):
@@ -528,10 +583,10 @@ class KoopDezeKnop(discord.ui.View):
         if product is None:
             await interaction.response.send_message("Dit product is niet meer beschikbaar.", ephemeral=True)
             return
-        await maak_ticket(interaction, product)
+        await maak_ticket_met_korting(interaction, product)
 
 
-async def maak_ticket(interaction: discord.Interaction, product=None, code=None):
+async def maak_ticket_met_korting(interaction: discord.Interaction, product=None):
     guild = interaction.guild
     user = interaction.user
 
@@ -540,14 +595,7 @@ async def maak_ticket(interaction: discord.Interaction, product=None, code=None)
             await interaction.response.send_message(f"Je hebt al een actief ticket geopend: {ch.mention}", ephemeral=True)
             return
 
-    procent, gebruikte_code = 0, None
-    if code:
-        sleutel = code.strip().upper()
-        if sleutel not in SHOP["kortingscodes"]:
-            await interaction.response.send_message("De opgegeven kortingscode is ongeldig.", ephemeral=True)
-            return
-        procent, gebruikte_code = SHOP["kortingscodes"][sleutel], sleutel
-
+    procent, code = haal_gebruiker_korting(user.id)
     staff = discord.utils.get(guild.roles, name=STAFF_ROL)
     toegang = discord.PermissionOverwrite(
         view_channel=True, send_messages=True, read_message_history=True, attach_files=True
@@ -577,7 +625,7 @@ async def maak_ticket(interaction: discord.Interaction, product=None, code=None)
     )
 
     if product:
-        b = maak_bestelling(user, product, procent, gebruikte_code, kanaal.id)
+        b = maak_bestelling(user, product, procent, code, kanaal.id)
         e = bestelling_embed(b, f"🛒 Bestelling #{b['id']}")
         e.description = (
             f"Welkom {user.mention}! Bedankt voor je bestelling. Een medewerker neemt zo snel mogelijk contact met je op voor de betaling en levering.\n\n"
@@ -605,7 +653,7 @@ class TicketKnop(discord.ui.View):
 
     @discord.ui.button(label="Open een ticket", emoji="🎫", style=discord.ButtonStyle.primary, custom_id="ticket_openen")
     async def openen(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await maak_ticket(interaction)
+        await maak_ticket_met_korting(interaction)
 
 
 class SluitKnop(discord.ui.View):
@@ -660,7 +708,7 @@ class FinnsBot(commands.Bot):
 
     async def on_member_join(self, member: discord.Member):
         guild = member.guild
-        not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID) if NOT_VERIFIED_ROL_ID else discord.utils.get(guild.roles, name=NOT_VERIFIED_ROL)
+        not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID)
         if not_verified_rol:
             try:
                 await member.add_roles(not_verified_rol, reason="Automatische Not-Verified rol bij join")
@@ -738,12 +786,12 @@ async def help_cmd(interaction: discord.Interaction):
 
 @tree.command(name="bots", description="Bekijk al onze beschikbare bots")
 async def bots_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=bots_embed(), ephemeral=True)
+    await interaction.response.send_message(embed=bots_embed("🤖 Ons Bot-assortiment", interaction.user.id), ephemeral=True)
 
 
 @tree.command(name="prijzen", description="Bekijk de prijzenlijst")
 async def prijzen_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=prijzen_embed(), ephemeral=True)
+    await interaction.response.send_message(embed=prijzen_embed(interaction.user.id), ephemeral=True)
 
 
 @tree.command(name="bestellen", description="Scroll door producten en open direct een bestelticket")
@@ -752,7 +800,7 @@ async def bestellen_cmd(interaction: discord.Interaction):
         await interaction.response.send_message("Er zijn momenteel geen producten beschikbaar om te bestellen.", ephemeral=True)
         return
     e = embed("🛒 Bot Bestellen", "Selecteer hieronder het gewenste product in het menu om je bestelling te starten:")
-    await interaction.response.send_message(embed=e, view=BestelShopView(), ephemeral=True)
+    await interaction.response.send_message(embed=e, view=BestelShopView(interaction.user.id), ephemeral=True)
 
 
 @tree.command(name="serverinfo", description="Informatie over deze server")
@@ -780,6 +828,61 @@ async def verificatie_setup_cmd(interaction: discord.Interaction):
 
     await interaction.channel.send(embed=verificatie_embed(), view=VerifieerDiscordKnop())
     await interaction.response.send_message("✅ Verificatiepaneel succesvol geplaatst!", ephemeral=True)
+
+
+# --- Kortingscode Commando's ---
+@tree.command(name="claimkorting", description="Claim een actieve kortingscode voor je bestellingen")
+@app_commands.describe(code="De kortingscode")
+async def claimkorting_cmd(interaction: discord.Interaction, code: str):
+    code_upper = code.strip().upper()
+    if code_upper not in SHOP["kortingscodes"]:
+        await interaction.response.send_message("❌ Deze kortingscode bestaat niet.", ephemeral=True)
+        return
+        
+    code_info = SHOP["kortingscodes"][code_upper]
+    verloopt_str = code_info.get("verloopt")
+    
+    if verloopt_str and verloopt_str != "Onbekend":
+        try:
+            verloop_dt = datetime.strptime(verloopt_str, "%d-%m-%Y").replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > verloop_dt:
+                await interaction.response.send_message(f"❌ Deze kortingscode is verlopen op {verloopt_str}.", ephemeral=True)
+                return
+        except Exception:
+            pass
+
+    if "actieve_claims" not in SHOP:
+        SHOP["actieve_claims"] = {}
+    SHOP["actieve_claims"][str(interaction.user.id)] = code_upper
+    bewaar_shop()
+
+    await interaction.response.send_message(
+        f"✅ Kortingscode **{code_upper}** ({code_info['procent']}% korting) succesvol geclaimed! De prijzen in `/shop` en `/prijzen` zijn nu automatisch aangepast voor jou.",
+        ephemeral=True
+    )
+
+
+@tree.command(name="createkortingscode", description="Maak een nieuwe kortingscode aan met vervaldatum (Staff)")
+@app_commands.describe(code="De kortingscode", percentage="Kortingspercentage (bijv. 20)", vervaldatum="Vervaldatum in formaat DD-MM-JJJJ")
+async def createkortingscode_cmd(interaction: discord.Interaction, code: str, percentage: int, vervaldatum: str):
+    if not await staff_check(interaction):
+        return
+        
+    code_upper = code.strip().upper()
+    
+    try:
+        datetime.strptime(vervaldatum, "%d-%m-%Y")
+    except ValueError:
+        await interaction.response.send_message("❌ Ongeldig datumformaat! Gebruik exact `DD-MM-JJJJ` (bijv. `31-12-2026`).", ephemeral=True)
+        return
+
+    SHOP["kortingscodes"][code_upper] = {
+        "procent": percentage,
+        "verloopt": vervaldatum
+    }
+    bewaar_shop()
+    
+    await interaction.response.send_message(f"✅ Kortingscode **{code_upper}** ({percentage}%) aangemaakt! Deze blijft geldig tot **{vervaldatum}**.", ephemeral=True)
 
 
 # --- Purge Commando ---
@@ -935,7 +1038,7 @@ async def serverwipe_cmd(interaction: discord.Interaction):
 
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
-    not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID) if NOT_VERIFIED_ROL_ID else discord.utils.get(guild.roles, name=NOT_VERIFIED_ROL)
+    not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID)
 
     for member in guild.members:
         if member.bot or member.guild_permissions.administrator:
@@ -988,8 +1091,8 @@ async def shop_cmd(interaction: discord.Interaction):
     if not SHOP["producten"]:
         await interaction.response.send_message("De winkel is momenteel leeg.", ephemeral=True)
         return
-    e = bots_embed("🛒 Bot Winkel")
-    await interaction.response.send_message(embed=e, view=BestelShopView(), ephemeral=True)
+    e = bots_embed("🛒 Bot Winkel", interaction.user.id)
+    await interaction.response.send_message(embed=e, view=BestelShopView(interaction.user.id), ephemeral=True)
 
 
 @tree.command(name="mijnbestellingen", description="Bekijk jouw actieve bestellingen")
@@ -1070,4 +1173,5 @@ async def verwijder_blacklist_cmd(interaction: discord.Interaction, user_id: str
 
 
 # Start de bot
+client = FinnsBot()
 client.run(TOKEN)
