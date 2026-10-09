@@ -121,7 +121,7 @@ def verificatie_embed():
         "🛡️ **Wat controleert het systeem?**\n"
         "• Je account moet minimaal **3 dagen oud** zijn (alt-account preventie).\n"
         "• Je mag niet op de server blacklist staan.\n\n"
-        "Klik op de knop hieronder om in te loggen via Discord en te verifiëren."
+        "Klik op de knop hieronder om in te loggen via Discord, de puzzel op te lossen en te verifiëren."
     )
 
 
@@ -349,7 +349,7 @@ async def handle_oauth_callback(request):
         """
         return web.Response(text=puzzle_html, content_type="text/html")
     
-    # 2. Controleer of het puzzelantwoord juist is (5 + 3 = 8)
+    # 2. Controleer het puzzelantwoord (5 + 3 = 8)
     if antwoord.strip() != "8":
         return web.Response(text="<html><body style='background:#1e1f22; color:#ff5555; font-family:sans-serif; text-align:center; padding-top:100px;'><h2>❌ Fout antwoord!</h2><p>Ga terug en probeer het opnieuw.</p></body></html>", content_type="text/html", status=400)
 
@@ -765,11 +765,14 @@ async def setup_embeds_cmd(interaction: discord.Interaction):
         if kanaal is None:
             ontbreekt.append(naam)
             continue
-        if view:
-            await kanaal.send(embed=e, view=view)
-        else:
-            await kanaal.send(embed=e)
-        geplaatst.append(f"#{naam}")
+        try:
+            if view:
+                await kanaal.send(embed=e, view=view)
+            else:
+                await kanaal.send(embed=e)
+            geplaatst.append(f"#{naam}")
+        except Exception:
+            pass
 
     tekst = "Berichten succesvol geplaatst in: " + ", ".join(geplaatst) if geplaatst else "Geen berichten geplaatst."
     if ontbreekt:
@@ -817,7 +820,7 @@ async def shutdown_cmd(interaction: discord.Interaction):
                 for role_id in SHUTDOWN_ALLOWED_ROLES:
                     role = guild.get_role(role_id)
                     if role:
-                        await channel.set_permissions(role, read_messages=True, view_channel=True, send_messages=True, connect=True, speak=True)
+                        await category.set_permissions(role, read_messages=True, view_channel=True, send_messages=True, connect=True, speak=True)
         except Exception:
             pass
 
