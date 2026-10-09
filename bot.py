@@ -129,7 +129,7 @@ def verificatie_embed():
     return embed(
         "🔒 Server Verificatie",
         "Welkom! Om volledige toegang te krijgen tot de server, dien je jezelf te verifiëren.\n\n"
-        "Klik op de knop hieronder om direct toegang te krijgen tot de server."
+        "Klik op de knop hieronder om een verificatiebericht in je privéberichten (DM) te ontvangen."
     )
 
 
@@ -306,7 +306,7 @@ def help_embed(staff=False):
 
 
 # --------------------------------------------------------------------------
-# Interactieve Moderatie Knoppen voor Verificatie Logs
+# Interactieve Moderatie Knoppen voor Verificatie Logs (In Server)
 # --------------------------------------------------------------------------
 class ModeratieActieKnop(discord.ui.View):
     def __init__(self, target_user_id: int):
@@ -341,7 +341,66 @@ class ModeratieActieKnop(discord.ui.View):
 
 
 # --------------------------------------------------------------------------
-# Directe Verificatie Knop (In-Discord)
+# DM Reactie Verificatie View (Vinkje & Kruisje)
+# --------------------------------------------------------------------------
+class DMVerificatieReactieView(discord.ui.View):
+    def __init__(self, guild: discord.Guild, member: discord.Member):
+        super().__init__(timeout=300) # 5 minuten tijd om te reageren
+        self.guild = guild
+        self.member = member
+
+    @discord.ui.button(label="Verifiëren", emoji="✅", style=discord.ButtonStyle.success)
+    async def bevestig_verificatie(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.member.id:
+            await interaction.response.send_message("Dit is niet jouw verificatiebericht.", ephemeral=True)
+            return
+
+        try:
+            # Haal actuele member op uit de guild
+            guild_member = self.guild.get_member(self.member.id) or await self.guild.fetch_member(self.member.id)
+            nieuwe_rol = self.guild.get_role(LID_ROL_ID)
+            not_verified_rol = self.guild.get_role(NOT_VERIFIED_ROL_ID) if NOT_VERIFIED_ROL_ID else discord.utils.get(self.guild.roles, name=NOT_VERIFIED_ROL)
+
+            # Verwijder alle oude rollen behalve @everyone
+            te_verwijderen = [r for r in guild_member.roles if r != self.guild.default_role]
+            if te_verwijderen:
+                await guild_member.remove_roles(*te_verwijderen)
+
+            # Geef de nieuwe rol
+            if nieuwe_rol:
+                await guild_member.add_roles(nieuwe_rol)
+
+            await interaction.response.edit_message(content="✅ Je bent succesvol geverifieerd! Je hebt nu toegang tot de server.", view=None)
+
+            # Stuur log naar kanaal 1557822081528369287
+            log_kanaal = self.guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
+            if log_kanaal:
+                tijdzone = "UTC / Systeem lokaal"
+                e = embed(
+                    "🛡️ Nieuwe Verificatie Details",
+                    f"**Naam:** {guild_member.name} (`{guild_member.display_name}`)\n"
+                    f"**Discord ID:** `{guild_member.id}`\n"
+                    f"**Account Aangemaakt:** {discord.utils.format_dt(guild_member.created_at, 'R')}\n"
+                    f"**Tijdzone:** {tijdzone}"
+                )
+                if guild_member.display_avatar:
+                    e.set_thumbnail(url=guild_member.display_avatar.url)
+                
+                await log_kanaal.send(embed=e, view=ModeratieActieKnop(guild_member.id))
+
+        except Exception as e:
+            await interaction.response.edit_message(content=f"❌ Er is een fout opgetreden bij het toekennen van de rollen: {e}", view=None)
+
+    @discord.ui.button(label="Annuleren", emoji="❌", style=discord.ButtonStyle.danger)
+    async def annuleer_verificatie(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.member.id:
+            await interaction.response.send_message("Dit is niet jouw verificatiebericht.", ephemeral=True)
+            return
+        await interaction.response.edit_message(content="❌ Verificatie geannuleerd.", view=None)
+
+
+# --------------------------------------------------------------------------
+# Directe Verificatie Knop in Server (Triggert de DM)
 # --------------------------------------------------------------------------
 class VerifieerDiscordKnop(discord.ui.View):
     def __init__(self):
@@ -356,38 +415,18 @@ class VerifieerDiscordKnop(discord.ui.View):
             await interaction.response.send_message("❌ Je kunt niet verifiëren omdat je account op de blacklist staat.", ephemeral=True)
             return
 
-        nieuwe_rol = guild.get_role(LID_ROL_ID)
-
         try:
-            # Verwijder huidige rollen (behalve @everyone)
-            te_verwijderen = [r for r in member.roles if r != guild.default_role]
-            if te_verwijderen:
-                await member.remove_roles(*te_verwijderen)
-
-            # Geef de nieuwe geverifieerde rol ID
-            if nieuwe_rol:
-                await member.add_roles(nieuwe_rol)
-            
-            await interaction.response.send_message("✅ Je bent succesvol geverifieerd! Je rollen zijn bijgewerkt.", ephemeral=True)
-
-            # Stuur info naar log kanaal ID 1557822081528369287
-            log_kanaal = guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
-            if log_kanaal:
-                tijdzone = "UTC / Systeem lokaal"
-                e = embed(
-                    "🛡️ Nieuwe Verificatie Details",
-                    f"**Naam:** {member.name} (`{member.display_name}`)\n"
-                    f"**Discord ID:** `{member.id}`\n"
-                    f"**Account Aangemaakt:** {discord.utils.format_dt(member.created_at, 'R')}\n"
-                    f"**Tijdzone:** {tijdzone}"
-                )
-                if member.display_avatar:
-                    e.set_thumbnail(url=member.display_avatar.url)
-                
-                await log_kanaal.send(embed=e, view=ModeratieActieKnop(member.id))
-
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Er is een fout opgetreden bij het toekennen van je rollen: {e}", ephemeral=True)
+            # Probeer een DM te sturen
+            dm_channel = await member.create_dm()
+            e = embed(
+                "🔒 Server Verificatie",
+                f"Welkom bij **{SERVERNAAM}**!\n\n"
+                "Klik hieronder op het vinkje (`✅`) om je verificatie te voltooien en toegang te krijgen tot de server."
+            )
+            await dm_channel.send(embed=e, view=DMVerificatieReactieView(guild, member))
+            await interaction.response.send_message("📬 Er is een verificatiebericht naar je privéberichten (DM) gestuurd!", ephemeral=True)
+        except Exception:
+            await interaction.response.send_message("❌ Kon geen privébericht (DM) sturen. Zorg ervoor dat je DM's open staan voor leden van deze server.", ephemeral=True)
 
 
 class BestelSelect(discord.ui.Select):
@@ -567,7 +606,6 @@ class FinnsBot(commands.Bot):
             except Exception:
                 pass
 
-        # Joinlogs verzending
         if CONFIG.get("joinlogs_enabled") and CONFIG.get("joinlogs_channel_id"):
             log_ch = guild.get_channel(CONFIG["joinlogs_channel_id"])
             if log_ch:
@@ -630,7 +668,7 @@ async def on_app_command_completion(interaction: discord.Interaction, command: a
 
 
 # --------------------------------------------------------------------------
-# Alle Commando's (Winkel, Support, Beheer, Joinlogs & Systeem)
+# Alle Commando's
 # --------------------------------------------------------------------------
 @tree.command(name="help", description="Toon alle beschikbare commando's")
 async def help_cmd(interaction: discord.Interaction):
@@ -751,7 +789,6 @@ async def setup_embeds_cmd(interaction: discord.Interaction):
     await interaction.followup.send(tekst, ephemeral=True)
 
 
-# --- Server & Winkel Beheer Commando's ---
 @tree.command(name="shutdown", description="Zet de server hermetisch op slot (Admin)")
 async def shutdown_cmd(interaction: discord.Interaction):
     if not any(rol.id == SHUTDOWN_ROL_ID for rol in interaction.user.roles):
@@ -861,7 +898,6 @@ async def maakserver_cmd(interaction: discord.Interaction):
         except Exception:
             pass
 
-    # Maak standaard kanalen en categorieën aan...
     await guild.create_category("🎫 ┃ BESTELLEN & SUPPORT")
     await guild.create_text_channel("koop-een-bot", category=discord.utils.get(guild.categories, name="🎫 ┃ BESTELLEN & SUPPORT"))
     await interaction.followup.send("✅ Serverstructuur succesvol aangemaakt!", ephemeral=True)
