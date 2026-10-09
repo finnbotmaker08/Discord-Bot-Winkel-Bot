@@ -14,7 +14,6 @@ from aiohttp import web
 # Laad de .env file
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-# Fallback hardcoded naar jouw server ID zodat synchronisatie altijd slaagt
 GUILD_ID = int(os.getenv("GUILD_ID") or 1556668456315781321)
 CLIENT_ID = "1556668456315781321"
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "JOUW_CLIENT_SECRET_HIER")
@@ -596,13 +595,17 @@ class FinnsBot(commands.Bot):
         self.add_view(TicketKnop())
         self.add_view(SluitKnop())
         
-        if GUILD_ID and GUILD_ID != 0:
-            guild = discord.Object(id=GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-        else:
-            await self.tree.sync()
-        print("✅ Slash commando's succesvol gesynchroniseerd.")
+        # Veilige try-except zodat de bot en webserver niet crashen bij een ontbrekende permissie
+        try:
+            if GUILD_ID and GUILD_ID != 0:
+                guild = discord.Object(id=GUILD_ID)
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+            else:
+                await self.tree.sync()
+            print("✅ Slash commando's succesvol gesynchroniseerd.")
+        except Exception as e:
+            print(f"⚠️ Waarschuwing bij synchroniseren (geen crash): {e}")
 
         self.web_app = web.Application()
         self.web_app["bot"] = self
