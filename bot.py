@@ -17,7 +17,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID") or 0)
 CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "JOUW_CLIENT_ID_HIER")
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "JOUW_CLIENT_SECRET_HIER")
-REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "http://localhost:8080/callback")
+REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "https://discord-bot-winkel-bot-production.up.railway.app/callback")
 PORT = int(os.getenv("PORT", 8080))
 
 if not TOKEN:
@@ -34,7 +34,7 @@ LID_ROL = "Lid"
 KLANT_ROL = "Klant"
 PREMIUM_KLANT_ROL = "💎 Premium Klant"
 NOT_VERIFIED_ROL = "Not-Verified"
-NOT_VERIFIED_ROL_ID = 1557808209924726890  # Toegevoegd ter voorkoming van ontbrekende variabelen
+NOT_VERIFIED_ROL_ID = 1557808209924726890
 TICKET_CATEGORIE = "🎫 ┃ BESTELLEN & SUPPORT"
 
 MEDEDELING_KANAAL_ID = 1556575385284648980
@@ -287,7 +287,7 @@ def help_embed(staff=False):
                 "`/blacklist`, `/verwijderblacklist`\n"
                 "`/kortingscode_maken`, `/kortingscodes`, `/kortingscode_verwijderen`\n"
                 "`/shopstats`  gedetailleerde omzet en statistieken\n"
-                "`/maakserver`, `/shutdown`, `/startup`"
+                "`/maakserver`, `/shutdown`, `/startup`, `/verificatie-setup`"
             ),
             inline=False,
         )
@@ -303,7 +303,6 @@ class VerifieerOAuthKnop(discord.ui.View):
 
     @discord.ui.button(label="Verifieer via OAuth2", emoji="🔗", style=discord.ButtonStyle.success, custom_id="oauth_verifieer_knop")
     async def verifieer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Dynamische detectie van scheme/host uit de headers van de request of via REDIRECT_URI
         params = {
             "client_id": CLIENT_ID,
             "redirect_uri": REDIRECT_URI,
@@ -328,7 +327,6 @@ async def handle_oauth_callback(request):
     if not code:
         return web.Response(text="❌ Fout: Geen autorisatiecode ontvangen van Discord.", status=400)
 
-    # Dynamische redirect URI bepaling voor Railway (X-Forwarded headers)
     forwarded_proto = request.headers.get("X-Forwarded-Proto", "https")
     forwarded_host = request.headers.get("X-Forwarded-Host", request.host)
     dynamic_redirect_uri = f"{forwarded_proto}://{forwarded_host}/callback"
@@ -339,7 +337,7 @@ async def handle_oauth_callback(request):
         "client_secret": CLIENT_SECRET,
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": REDIRECT_URI if "localhost" in REDIRECT_URI else dynamic_redirect_uri,
+        "redirect_uri": REDIRECT_URI if "localhost" not in REDIRECT_URI else dynamic_redirect_uri,
     }
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -578,7 +576,6 @@ class FinnsBot(commands.Bot):
             await self.tree.sync()
         print("✅ Slash commando's succesvol gesynchroniseerd.")
 
-        # Start de aiohttp webserver binnen de event loop van de bot
         self.web_app = web.Application()
         self.web_app["bot"] = self
         self.web_app.router.add_get("/callback", handle_oauth_callback)
@@ -603,7 +600,6 @@ class FinnsBot(commands.Bot):
             except discord.Forbidden:
                 print("Kan de rol Not-Verified niet toekennen: zet de bot-rol hoger in de lijst.")
 
-    # Geavanceerd Anti-Raid / Anti-Spam Systeem (5+ tags in één bericht)
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
@@ -704,6 +700,16 @@ async def serverinfo_cmd(interaction: discord.Interaction):
 @tree.command(name="ping", description="Test de reactiesnelheid van de bot")
 async def ping_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(f"🏓 Pong! Latency is {round(client.latency * 1000)} ms")
+
+
+@tree.command(name="verificatie-setup", description="Plaats het verificatiepaneel in het kanaal (Alleen Eigenaar)")
+async def verificatie_setup_cmd(interaction: discord.Interaction):
+    if interaction.user != interaction.guild.owner:
+        await interaction.response.send_message("❌ Alleen de **servereigenaar** kan dit commando uitvoeren.", ephemeral=True)
+        return
+
+    await interaction.channel.send(embed=verificatie_embed(), view=VerifieerOAuthKnop())
+    await interaction.response.send_message("✅ Verificatiepaneel succesvol geplaatst!", ephemeral=True)
 
 
 @tree.command(name="setup_embeds", description="Plaats welkomst- en infobereichten in de kanalen (admin)")
@@ -1344,4 +1350,5 @@ async def shopstats_cmd(interaction: discord.Interaction):
 
 
 # Start de bot
+client = FinnsBot()
 client.run(TOKEN)
