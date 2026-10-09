@@ -17,7 +17,6 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID") or 0)
 CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "1556668456315781321")
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "JOUW_CLIENT_SECRET_HIER")
-REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "http://localhost:8080/callback")
 PORT = int(os.getenv("PORT", 8080))
 
 if not TOKEN:
@@ -145,8 +144,8 @@ class VerifieerOAuthKnop(discord.ui.View):
 
     @discord.ui.button(label="Verifieer via OAuth2 & Puzzel", emoji="🧩", style=discord.ButtonStyle.success, custom_id="oauth_verifieer_knop")
     async def verifieer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        parsed_uri = urllib.parse.urlparse(REDIRECT_URI)
-        base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}" if parsed_uri.netloc else "http://localhost:8080"
+        # Haalt automatisch het juiste domein op waar de webserver op draait (werkt altijd op Railway!)
+        base_url = f"{interaction.client.web_domain}" if hasattr(interaction.client, "web_domain") else "http://localhost:8080"
         puzzel_url = f"{base_url}/puzzel"
         
         e = embed(
@@ -190,9 +189,14 @@ async def handle_puzzel_check(request):
         del ACTIEVE_PUZZELS[sessie_id]
 
     if verwacht_antwoord and antwoord == verwacht_antwoord:
+        # Bepaal automatisch de juiste redirect uri op basis van het inkomende verzoek
+        scheme = request.headers.get("X-Forwarded-Proto", "http")
+        host = request.host
+        redirect_uri = f"{scheme}://{host}/callback"
+
         params = {
             "client_id": CLIENT_ID,
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": "identify guilds.join"
         }
@@ -214,13 +218,17 @@ async def handle_oauth_callback(request):
 
     VERWERKTE_CODES.add(code)
 
+    scheme = request.headers.get("X-Forwarded-Proto", "http")
+    host = request.host
+    redirect_uri = f"{scheme}://{host}/callback"
+
     token_url = "https://discord.com/api/oauth2/token"
     data = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": redirect_uri,
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     bot_instance = request.app["bot"]
@@ -274,6 +282,7 @@ class FinnsBot(commands.Bot):
         intents.message_content = True
         intents.guilds = True
         super().__init__(command_prefix="m?", intents=intents)
+        self.web_domain = "http://localhost:8080"
 
     async def setup_hook(self):
         self.add_view(VerifieerOAuthKnop())
@@ -294,7 +303,15 @@ class FinnsBot(commands.Bot):
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, "0.0.0.0", PORT)
         await self.site.start()
-        print(f"🌐 Webserver gestart op poort {PORT}")
+
+        # Automatisch detecteren of Railway een publiek domein heeft ingesteld via omgevingsvariabelen
+        railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN")
+        if railway_domain:
+            self.web_domain = f"https://{railway_domain}"
+        else:
+            self.web_domain = f"http://localhost:{PORT}"
+
+        print(f"🌐 Webserver gestart op poort {PORT} (Domein: {self.web_domain})")
 
     async def on_ready(self):
         print(f"🤖 Ingelogd als {self.user}")
