@@ -120,7 +120,7 @@ def verificatie_embed():
     return embed(
         "🔒 Veilige OAuth2 Verificatie & Puzzel",
         "Welkom! Om volledige toegang te krijgen tot de server en de rol te ontvangen, dien je in te loggen via OAuth2 en de puzzel op te lossen.\n\n"
-        "🛡️ **What controleert het systeem?**\n"
+        "🛡️ **Wat controleert het systeem?**\n"
         "• Je account moet minimaal **3 dagen oud** zijn.\n"
         "• Je mag niet op de server blacklist staan.\n\n"
         "Klik op de knop hieronder om te starten."
@@ -179,6 +179,8 @@ def vind_bestelling(bestelling_id):
 
 
 def is_staff(member):
+    if not isinstance(member, discord.Member):
+        return False
     return member.guild_permissions.administrator or any(r.name == STAFF_ROL for r in member.roles)
 
 
