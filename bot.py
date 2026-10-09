@@ -14,7 +14,8 @@ from aiohttp import web
 # Laad de .env file
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID") or 0)
+# Fallback hardcoded naar jouw server ID zodat synchronisatie altijd slaagt
+GUILD_ID = int(os.getenv("GUILD_ID") or 1556668456315781321)
 CLIENT_ID = "1556668456315781321"
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "JOUW_CLIENT_SECRET_HIER")
 REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "https://discord-bot-winkel-bot-production.up.railway.app/callback")
@@ -121,7 +122,7 @@ def verificatie_embed():
         "🛡️ **Wat controleert het systeem?**\n"
         "• Je account moet minimaal **3 dagen oud** zijn (alt-account preventie).\n"
         "• Je mag niet op de server blacklist staan.\n\n"
-        "Klik op de knop hieronder om in te loggen via Discord, de puzzel op te lossen en te verifiëren."
+        "Klik op de knop hieronder om in te loggen via Discord en te verifiëren."
     )
 
 
@@ -287,7 +288,7 @@ def help_embed(staff=False):
                 "`/blacklist`, `/verwijderblacklist`\n"
                 "`/kortingscode_maken`, `/kortingscodes`, `/kortingscode_verwijderen`\n"
                 "`/shopstats`  gedetailleerde omzet en statistieken\n"
-                "`/maakserver`, `/shutdown`, `/startup`, `/verificatie-setup`"
+                "`/maakserver`, `/shutdown`, `/startup`, `/verificatie-setup`, `/setup_embeds`"
             ),
             inline=False,
         )
@@ -326,7 +327,6 @@ async def handle_oauth_callback(request):
     code = request.query.get("code")
     antwoord = request.query.get("antwoord")
     
-    # 1. Toon de beveiligingspuzzel als er nog geen antwoord is ingevoerd
     if not antwoord:
         if not code:
             return web.Response(text="❌ Fout: Geen autorisatiecode ontvangen van Discord.", status=400)
@@ -349,7 +349,6 @@ async def handle_oauth_callback(request):
         """
         return web.Response(text=puzzle_html, content_type="text/html")
     
-    # 2. Controleer het puzzelantwoord (5 + 3 = 8)
     if antwoord.strip() != "8":
         return web.Response(text="<html><body style='background:#1e1f22; color:#ff5555; font-family:sans-serif; text-align:center; padding-top:100px;'><h2>❌ Fout antwoord!</h2><p>Ga terug en probeer het opnieuw.</p></body></html>", content_type="text/html", status=400)
 
@@ -597,7 +596,7 @@ class FinnsBot(commands.Bot):
         self.add_view(TicketKnop())
         self.add_view(SluitKnop())
         
-        if GUILD_ID:
+        if GUILD_ID and GUILD_ID != 0:
             guild = discord.Object(id=GUILD_ID)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
