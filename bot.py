@@ -24,11 +24,8 @@ if not TOKEN:
 SERVERNAAM = "Finns Bots"
 KLEUR = 0x5865F2
 STAFF_ROL = "Staff"
-LID_ROL_ID = 1557813756288045229  # Geverifieerde leden rol
-KLANT_ROL = "Klant"
-PREMIUM_KLANT_ROL = "💎 Premium Klant"
-NOT_VERIFIED_ROL = "Not-Verified"
-NOT_VERIFIED_ROL_ID = 1557808209924726889  # Juiste rol-ID
+LID_ROL_ID = 1557813756288045229         # De geverifieerde rol ID
+NOT_VERIFIED_ROL_ID = 1557808209924726889 # De non-verified rol ID
 TICKET_CATEGORIE = "🎫 ┃ BESTELLEN & SUPPORT"
 VERIFICATIE_LOG_KANAAL_ID = 1557822081528369287
 
@@ -357,22 +354,14 @@ class DMVerificatieKnopView(discord.ui.View):
                 await interaction.response.edit_message(content="❌ Fout: De geverifieerde rol kan niet worden gevonden in de server.", view=None)
                 return
 
-            # Verwijder oude rollen of specifiek de Not-Verified rol
-            roles_to_remove = []
+            # Verwijder ENKEL de Not-Verified rol (indien aanwezig)
             if not_verified_rol and not_verified_rol in guild_member.roles:
-                roles_to_remove.append(not_verified_rol)
-            
-            for r in guild_member.roles:
-                if r != self.guild.default_role and not r.managed and r.id != LID_ROL_ID:
-                    roles_to_remove.append(r)
-
-            if roles_to_remove:
                 try:
-                    await guild_member.remove_roles(*roles_to_remove, reason="Server Verificatie: oude rollen verwijderd")
+                    await guild_member.remove_roles(not_verified_rol, reason="Verificatie voltooid: Not-Verified rol verwijderd")
                 except Exception as ex:
-                    print(f"Kon oude rollen niet verwijderen: {ex}")
+                    print(f"⚠️ Kon Not-Verified rol niet verwijderen: {ex}")
 
-            # Voeg de nieuwe geverifieerde rol toe
+            # Voeg de geverifieerde rol toe
             try:
                 await guild_member.add_roles(nieuwe_rol, reason="Server Verificatie voltooid")
             except Exception as ex:
@@ -380,7 +369,14 @@ class DMVerificatieKnopView(discord.ui.View):
                 await interaction.response.edit_message(content="❌ Kan de rol niet toekennen. Zorg dat de bot-rol hoger staat dan de geverifieerde rol!", view=None)
                 return
 
-            await interaction.response.edit_message(content="✅ Je bent succesvol geverifieerd! Je hebt nu toegang tot de server.", view=None)
+            # Bewerk het originele knoppenbericht zodat de knoppen verdwijnen
+            await interaction.response.edit_message(content="🔒 Verificatieproces afgerond.", view=None)
+
+            # Stuur een gloednieuw succesbericht in de DM's van de gebruiker
+            try:
+                await interaction.user.send("✅ Je bent succesvol geverifieerd! Je hebt nu toegang tot de server.")
+            except Exception:
+                pass
 
             # Stuur log naar logkanaal
             log_kanaal = self.guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
@@ -400,7 +396,10 @@ class DMVerificatieKnopView(discord.ui.View):
 
         except Exception as e:
             print(f"Fout bij verifiëren via DM: {e}")
-            await interaction.response.edit_message(content=f"❌ Er is een onverwachte fout opgetreden: {e}", view=None)
+            try:
+                await interaction.response.edit_message(content=f"❌ Er is een onverwachte fout opgetreden: {e}", view=None)
+            except Exception:
+                pass
 
     @discord.ui.button(label="Annuleren", emoji="❌", style=discord.ButtonStyle.danger)
     async def annuleer(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -456,16 +455,9 @@ class FallbackKanaalVerificatieView(discord.ui.View):
             nieuwe_rol = self.guild.get_role(LID_ROL_ID)
             not_verified_rol = self.guild.get_role(NOT_VERIFIED_ROL_ID)
 
-            roles_to_remove = []
             if not_verified_rol and not_verified_rol in guild_member.roles:
-                roles_to_remove.append(not_verified_rol)
-            for r in guild_member.roles:
-                if r != self.guild.default_role and not r.managed and r.id != LID_ROL_ID:
-                    roles_to_remove.append(r)
-
-            if roles_to_remove:
                 try:
-                    await guild_member.remove_roles(*roles_to_remove)
+                    await guild_member.remove_roles(not_verified_rol)
                 except Exception:
                     pass
 
@@ -473,6 +465,11 @@ class FallbackKanaalVerificatieView(discord.ui.View):
                 await guild_member.add_roles(nieuwe_rol)
 
             await interaction.response.edit_message(content="✅ Je bent succesvol geverifieerd via het kanaal!", view=None)
+
+            try:
+                await interaction.user.send("✅ Je bent succesvol geverifieerd! Je hebt nu toegang tot de server.")
+            except Exception:
+                pass
 
             log_kanaal = self.guild.get_channel(VERIFICATIE_LOG_KANAAL_ID)
             if log_kanaal:
@@ -666,7 +663,7 @@ class FinnsBot(commands.Bot):
         not_verified_rol = guild.get_role(NOT_VERIFIED_ROL_ID) if NOT_VERIFIED_ROL_ID else discord.utils.get(guild.roles, name=NOT_VERIFIED_ROL)
         if not_verified_rol:
             try:
-                await member.add_roles(not_verified_rol)
+                await member.add_roles(not_verified_rol, reason="Automatische Not-Verified rol bij join")
             except Exception:
                 pass
 
