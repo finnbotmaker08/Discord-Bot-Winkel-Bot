@@ -28,7 +28,7 @@ LID_ROL_ID = 1557813756288045229  # Geverifieerde leden rol
 KLANT_ROL = "Klant"
 PREMIUM_KLANT_ROL = "💎 Premium Klant"
 NOT_VERIFIED_ROL = "Not-Verified"
-NOT_VERIFIED_ROL_ID = 1557808209924726889  # Gecorrigeerd rol-ID
+NOT_VERIFIED_ROL_ID = 1557808209924726889  # Juiste rol-ID
 TICKET_CATEGORIE = "🎫 ┃ BESTELLEN & SUPPORT"
 VERIFICATIE_LOG_KANAAL_ID = 1557822081528369287
 
@@ -195,14 +195,6 @@ async def staff_check(interaction):
     return False
 
 
-async def product_autocomplete(interaction: discord.Interaction, current: str):
-    return [
-        app_commands.Choice(name=p["naam"][:100], value=p["naam"][:100])
-        for p in SHOP["producten"]
-        if current.lower() in p["naam"].lower()
-    ][:25]
-
-
 def maak_bestelling(user, product, procent, code, ticket_kanaal_id):
     prijs = round(product["prijs"] * (100 - procent) / 100, 2)
     b = {
@@ -359,25 +351,33 @@ class DMVerificatieKnopView(discord.ui.View):
         try:
             guild_member = await self.guild.fetch_member(self.member_id)
             nieuwe_rol = self.guild.get_role(LID_ROL_ID)
+            not_verified_rol = self.guild.get_role(NOT_VERIFIED_ROL_ID)
 
             if not nieuwe_rol:
                 await interaction.response.edit_message(content="❌ Fout: De geverifieerde rol kan niet worden gevonden in de server.", view=None)
                 return
 
-            # Verwijder oude rollen behalve @everyone en eventuele bot-rollen
-            te_verwijderen = [r for r in guild_member.roles if r != self.guild.default_role and not r.managed]
-            if te_verwijderen:
+            # Verwijder oude rollen of specifiek de Not-Verified rol
+            roles_to_remove = []
+            if not_verified_rol and not_verified_rol in guild_member.roles:
+                roles_to_remove.append(not_verified_rol)
+            
+            for r in guild_member.roles:
+                if r != self.guild.default_role and not r.managed and r.id != LID_ROL_ID:
+                    roles_to_remove.append(r)
+
+            if roles_to_remove:
                 try:
-                    await guild_member.remove_roles(*te_verwijderen, reason="Server Verificatie: oude rollen verwijderd")
+                    await guild_member.remove_roles(*roles_to_remove, reason="Server Verificatie: oude rollen verwijderd")
                 except Exception as ex:
                     print(f"Kon oude rollen niet verwijderen: {ex}")
 
-            # Voeg de geverifieerde rol toe
+            # Voeg de nieuwe geverifieerde rol toe
             try:
                 await guild_member.add_roles(nieuwe_rol, reason="Server Verificatie voltooid")
             except Exception as ex:
                 print(f"Kon nieuwe rol niet toekennen: {ex}")
-                await interaction.response.edit_message(content="❌ Kan de rol niet toekennen. Controleer of de bot-rol **boven** de geverifieerde rol staat in de serverinstellingen!", view=None)
+                await interaction.response.edit_message(content="❌ Kan de rol niet toekennen. Zorg dat de bot-rol hoger staat dan de geverifieerde rol!", view=None)
                 return
 
             await interaction.response.edit_message(content="✅ Je bent succesvol geverifieerd! Je hebt nu toegang tot de server.", view=None)
@@ -454,11 +454,18 @@ class FallbackKanaalVerificatieView(discord.ui.View):
         try:
             guild_member = await self.guild.fetch_member(member.id)
             nieuwe_rol = self.guild.get_role(LID_ROL_ID)
+            not_verified_rol = self.guild.get_role(NOT_VERIFIED_ROL_ID)
 
-            te_verwijderen = [r for r in guild_member.roles if r != self.guild.default_role and not r.managed]
-            if te_verwijderen:
+            roles_to_remove = []
+            if not_verified_rol and not_verified_rol in guild_member.roles:
+                roles_to_remove.append(not_verified_rol)
+            for r in guild_member.roles:
+                if r != self.guild.default_role and not r.managed and r.id != LID_ROL_ID:
+                    roles_to_remove.append(r)
+
+            if roles_to_remove:
                 try:
-                    await guild_member.remove_roles(*te_verwijderen)
+                    await guild_member.remove_roles(*roles_to_remove)
                 except Exception:
                     pass
 
