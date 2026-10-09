@@ -18,6 +18,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID") or 0)
 CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "1556668456315781321")
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "JOUW_CLIENT_SECRET_HIER")
+REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "http://localhost:8080/callback")
 PORT = int(os.getenv("PORT", 8080))
 
 if not TOKEN:
@@ -179,8 +180,6 @@ def vind_bestelling(bestelling_id):
 
 
 def is_staff(member):
-    if not isinstance(member, discord.Member):
-        return False
     return member.guild_permissions.administrator or any(r.name == STAFF_ROL for r in member.roles)
 
 
@@ -287,7 +286,6 @@ def help_embed(staff=False):
                 "`/afronden`  bestelling afronden & klant-rol toekennen\n"
                 "`/annuleren`  bestelling annuleren\n"
                 "`/serverwipe`  wist alle berichten, behoudt kanalen & reset rollen naar Not-Verified\n"
-                "`/setup-verificatie`  stuur het verificatiepaneel\n"
                 "`/product_toevoegen`, `/product_bewerken`, `/product_verwijderen`\n"
                 "`/blacklist`, `/verwijderblacklist`\n"
                 "`/kortingscode_maken`, `/kortingscodes`, `/kortingscode_verwijderen`\n"
@@ -308,7 +306,8 @@ class VerifieerOAuthKnop(discord.ui.View):
 
     @discord.ui.button(label="Verifieer via OAuth2 & Puzzel", emoji="🧩", style=discord.ButtonStyle.success, custom_id="oauth_verifieer_knop")
     async def verifieer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        base_url = f"{interaction.client.web_domain}" if hasattr(interaction.client, "web_domain") else f"http://localhost:{PORT}"
+        parsed_uri = urllib.parse.urlparse(REDIRECT_URI)
+        base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}" if parsed_uri.netloc else "http://localhost:8080"
         puzzel_url = f"{base_url}/puzzel"
         
         e = embed(
@@ -373,13 +372,9 @@ async def handle_puzzel_check(request):
         del ACTIEVE_PUZZELS[sessie_id]
 
     if verwacht_antwoord and antwoord == verwacht_antwoord:
-        scheme = request.headers.get("X-Forwarded-Proto", "http")
-        host = request.host
-        redirect_uri = f"{scheme}://{host}/callback"
-
         params = {
             "client_id": CLIENT_ID,
-            "redirect_uri": redirect_uri,
+            "redirect_uri": REDIRECT_URI,
             "response_type": "code",
             "scope": "identify guilds.join"
         }
@@ -420,17 +415,13 @@ async def handle_oauth_callback(request):
 
     VERWERKTE_CODES.add(code)
 
-    scheme = request.headers.get("X-Forwarded-Proto", "http")
-    host = request.host
-    redirect_uri = f"{scheme}://{host}/callback"
-
     token_url = "https://discord.com/api/oauth2/token"
     data = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": redirect_uri,
+        "redirect_uri": REDIRECT_URI,
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -673,7 +664,6 @@ class FinnsBot(commands.Bot):
         intents.message_content = True
         intents.guilds = True
         super().__init__(command_prefix="m?", intents=intents)
-        self.web_domain = f"http://localhost:{PORT}"
 
     async def setup_hook(self):
         self.add_view(VerifieerOAuthKnop())
@@ -700,14 +690,7 @@ class FinnsBot(commands.Bot):
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, "0.0.0.0", PORT)
         await self.site.start()
-
-        railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN")
-        if railway_domain:
-            self.web_domain = f"https://{railway_domain}"
-        else:
-            self.web_domain = f"http://localhost:{PORT}"
-
-        print(f"🌐 OAuth2 webserver & willekeurige puzzel gestart op poort {PORT} (Domein: {self.web_domain})")
+        print(f"🌐 OAuth2 webserver & willekeurige puzzel gestart op poort {PORT}")
 
     async def on_ready(self):
         await self.change_presence(activity=discord.Game(name="Bots verkopen | /help"))
@@ -818,14 +801,6 @@ async def serverinfo_cmd(interaction: discord.Interaction):
 @tree.command(name="ping", description="Test de reactiesnelheid van de bot")
 async def ping_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(f"🏓 Pong! Latency is {round(client.latency * 1000)} ms")
-
-
-@tree.command(name="setup-verificatie", description="Stuur het verificatiebericht met de knop (Admin)")
-@app_commands.default_permissions(administrator=True)
-async def setup_verificatie_cmd(interaction: discord.Interaction):
-    e = verificatie_embed()
-    await interaction.channel.send(embed=e, view=VerifieerOAuthKnop())
-    await interaction.response.send_message("Verificatiepaneel succesvol verzonden in dit kanaal!", ephemeral=True)
 
 
 @tree.command(name="setup_embeds", description="Plaats welkomst- en infobereichten in de kanalen (admin)")
