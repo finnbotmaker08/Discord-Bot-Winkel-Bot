@@ -1043,15 +1043,17 @@ async def bestellingen_cmd(interaction: discord.Interaction):
 async def afronden_cmd(interaction: discord.Interaction, bestelling_id: int):
     if not await staff_check(interaction):
         return
+        
+    await interaction.response.defer(ephemeral=True)
+
     b = vind_bestelling(bestelling_id)
     if b is None:
-        await interaction.response.send_message("Bestelling niet gevonden.", ephemeral=True)
+        await interaction.followup.send("Bestelling niet gevonden.", ephemeral=True)
         return
     if b["status"] != "open":
-        await interaction.response.send_message(f"Deze bestelling is al {b['status']}.", ephemeral=True)
+        await interaction.followup.send(f"Deze bestelling is al {b['status']}.", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
     b["status"] = "afgerond"
     b["afgerond_door"] = interaction.user.id
@@ -1061,21 +1063,30 @@ async def afronden_cmd(interaction: discord.Interaction, bestelling_id: int):
     bewaar_stats(WEEK_STATS)
 
     lid = guild.get_member(b["gebruiker_id"])
+    if not lid:
+        try:
+            lid = await guild.fetch_member(b["gebruiker_id"])
+        except Exception:
+            lid = None
+
     klant_rol = guild.get_role(KLANT_ROL_ID)
-    if lid:
-        if klant_rol:
-            try:
-                await lid.add_roles(klant_rol)
-            except discord.Forbidden:
-                print("⚠️ Bot mist permissie 'Rollen beheren' om de Klant-rol toe te kennen!")
-        else:
-            print(f"⚠️ Kon de Klant-rol met ID {KLANT_ROL_ID} niet vinden in de server!")
+    if lid and klant_rol:
+        try:
+            await lid.add_roles(klant_rol)
+        except discord.Forbidden:
+            print("⚠️ Bot mist permissie 'Rollen beheren' om de Klant-rol toe te kennen!")
+        except Exception as e:
+            print(f"⚠️ Fout bij toekennen rol: {e}")
 
     ticket = guild.get_channel(b["ticket_kanaal_id"])
     if ticket:
-        await ticket.send(f"✅ Bestelling **#{b['id']} ({b['product_naam']})** is afgerond!")
+        try:
+            await ticket.send(f"✅ Bestelling **#{b['id']} ({b['product_naam']})** is afgerond!")
+        except Exception:
+            pass
+
     await log_bestelling(guild, bestelling_embed(b, f"✅ Bestelling #{b['id']} afgerond door {interaction.user.display_name}"))
-    await interaction.followup.send(f"✅ Bestelling #{b['id']} afgerond.", ephemeral=True)
+    await interaction.followup.send(f"✅ Bestelling #{b['id']} is afgerond en de klantrol is toegekend.", ephemeral=True)
 
 @bot.tree.command(name="annuleren", description="Annuleer een bestelling (staff/klant)")
 @app_commands.describe(bestelling_id="Het nummer van de bestelling")
