@@ -35,6 +35,7 @@ GUILD_ID = int(os.getenv("GUILD_ID", 1556668456315781321))
 AUTOMATIC_JOIN_ROLE_ID = 1557813756288045229
 VERIFIED_ROLE_ID = 1557808209924726889
 UNVERIFIED_ROLE_ID = 1557813756288045229
+KLANT_ROL_ID = 1556570231105781833
 VERIFY_LOG_CHANNEL_ID = 1558408492887572530
 WEEK_OVERZICHT_KANAAL_ID = 1558414858108534795
 BESTELLINGEN_LOG_KANAAL_ID = 1557822081528369287
@@ -51,7 +52,6 @@ SERVERNAAM = "Finns Bots"
 KLEUR = 0x5865F2
 STAFF_ROL = "Staff"
 LID_ROL = "Lid"
-KLANT_ROL = "Klant"
 TICKET_CATEGORIE = "🎫 TICKETS"
 
 MEDEDELING_KANAAL_ID = 1556575385284648980
@@ -1061,7 +1061,7 @@ async def afronden_cmd(interaction: discord.Interaction, bestelling_id: int):
     bewaar_stats(WEEK_STATS)
 
     lid = guild.get_member(b["gebruiker_id"])
-    klant_rol = discord.utils.get(guild.roles, name=KLANT_ROL)
+    klant_rol = guild.get_role(KLANT_ROL_ID)
     if lid:
         if klant_rol:
             try:
@@ -1069,7 +1069,7 @@ async def afronden_cmd(interaction: discord.Interaction, bestelling_id: int):
             except discord.Forbidden:
                 print("⚠️ Bot mist permissie 'Rollen beheren' om de Klant-rol toe te kennen!")
         else:
-            print(f"⚠️ Kon de rol '{KLANT_ROL}' niet vinden in de server!")
+            print(f"⚠️ Kon de Klant-rol met ID {KLANT_ROL_ID} niet vinden in de server!")
 
     ticket = guild.get_channel(b["ticket_kanaal_id"])
     if ticket:
