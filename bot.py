@@ -707,15 +707,11 @@ class FinnsBot(commands.Bot):
         self.add_view(ShopView())
 
         try:
-            guild = discord.Object(id=GUILD_ID)
-            self.tree.clear_commands(guild=guild)
-            await self.tree.sync(guild=guild)
-        except Exception:
-            pass
-
-        self.tree.clear_commands(guild=None)
-        synced = await self.tree.sync()
-        print(f"✅ Globaal gesynchroniseerd ({len(synced)} unieke commando's).")
+            # Correcte synchronisatie zodat alle commando's geladen worden
+            synced = await self.tree.sync()
+            print(f"✅ Globaal gesynchroniseerd ({len(synced)} unieke commando's).")
+        except Exception as e:
+            print(f"⚠️ Fout bij synchroniseren van commando's: {e}")
         
         check_twee_wekelijkse_overzicht.start()
 
