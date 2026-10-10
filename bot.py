@@ -44,6 +44,7 @@ KANAAL_SUPPORT_ID = 1557822060967886999
 KANAAL_PRIJZEN_ID = 1557822048279994458
 KANAAL_BESTELLEN_ID = 1557822059646554194
 KANAAL_VERIFICATIE_ID = 1557822033545527493
+KANAAL_REVIEWS_ID = 1558517860513349702
 
 SERVERNAAM = "Finns Bots"
 KLEUR = 0x5865F2
@@ -694,13 +695,11 @@ class FinnsBot(commands.Bot):
 
         try:
             guild = discord.Object(id=GUILD_ID)
-            # Wis eventuele oude/dubbele server specifieke commando's
             self.tree.clear_commands(guild=guild)
             await self.tree.sync(guild=guild)
         except Exception:
             pass
 
-        # Synchroniseer alle commando's uitsluitend globaal
         synced = await self.tree.sync()
         print(f"✅ Globaal gesynchroniseerd ({len(synced)} unieke commando's).")
         
@@ -860,9 +859,15 @@ async def review_cmd(
     sterren: app_commands.Range[int, 1, 5],
     tekst: app_commands.Range[str, 5, 500],
 ):
-    kanaal = discord.utils.get(interaction.guild.text_channels, name="reviews")
+    # Eerst zoeken op basis van het specifieke Kanaal-ID
+    kanaal = interaction.guild.get_channel(KANAAL_REVIEWS_ID)
+    
+    # Fallback als het kanaal niet op ID te vinden is
     if kanaal is None:
-        await interaction.response.send_message("Het kanaal #reviews is niet gevonden.", ephemeral=True)
+        kanaal = discord.utils.get(interaction.guild.text_channels, name="reviews")
+        
+    if kanaal is None:
+        await interaction.response.send_message("Het review-kanaal is niet gevonden.", ephemeral=True)
         return
 
     e = discord.Embed(
