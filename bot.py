@@ -37,6 +37,7 @@ VERIFIED_ROLE_ID = 1557808209924726889
 UNVERIFIED_ROLE_ID = 1557813756288045229
 VERIFY_LOG_CHANNEL_ID = 1558408492887572530
 WEEK_OVERZICHT_KANAAL_ID = 1558414858108534795
+BESTELLINGEN_LOG_KANAAL_ID = 1557822081528369287
 
 KANAAL_REGELS_ID = 1557822036154384457
 KANAAL_WELKOM_ID = 1558409267021742180
@@ -203,16 +204,19 @@ def bestelling_embed(b, titel):
     e.add_field(name="Klant", value=f"<@{b['gebruiker_id']}>")
     e.add_field(name="Product", value=b["product_naam"])
     if b['korting_procent']:
-        prijs = f"~~{euro(b['originele_prijs'])}~~ **{euro(b['prijs'])}** ({b['korting_procent']}% korting met code `{b['korting_code']}`)"
+        e.add_field(name="Originele prijs", value=euro(b['originele_prijs']), inline=True)
+        e.add_field(name="Kortingscode", value=f"`{b['korting_code']}` ({b['korting_procent']}% korting)", inline=True)
+        e.add_field(name="Gecorrigeerde prijs", value=f"**{euro(b['prijs'])}**", inline=False)
     else:
-        prijs = f"**{euro(b['prijs'])}**"
-    e.add_field(name="Prijs", value=prijs, inline=False)
-    e.add_field(name="Status", value=f"{STATUS_ICOON[b['status']]} {b['status']}")
+        e.add_field(name="Prijs", value=f"**{euro(b['prijs'])}**", inline=False)
+    e.add_field(name="Status", value=f"{STATUS_ICOON[b['status']]} {b['status']}", inline=False)
     e.set_footer(text=SERVERNAAM)
     return e
 
 async def log_bestelling(guild, e):
-    kanaal = discord.utils.get(guild.text_channels, name="bestellingen-log")
+    kanaal = guild.get_channel(BESTELLINGEN_LOG_KANAAL_ID)
+    if kanaal is None:
+        kanaal = discord.utils.get(guild.text_channels, name="bestellingen-log")
     if kanaal:
         await kanaal.send(embed=e)
 
@@ -466,9 +470,18 @@ async def maak_ticket(interaction: discord.Interaction, product=None, code=None)
         b = maak_bestelling(user, product, procent, gebruikte_code, kanaal.id)
         e = bestelling_embed(b, f"🛒 Bestelling #{b['id']}")
         
-        korting_melding = f"\n🎉 **Kortingscode geactiveerd:** `{gebruikte_code}` ({procent}% korting verwerkt!)" if gebruikte_code else ""
+        if gebruikte_code:
+            korting_tekst = (
+                f"\n🎉 **Kortingscode geactiveerd:** `{gebruikte_code}`\n"
+                f"• **Originele prijs:** ~~{euro(b['originele_prijs'])}~~\n"
+                f"• **Korting:** {procent}%\n"
+                f"• **Gecorrigeerde prijs:** **{euro(b['prijs'])}**\n"
+            )
+        else:
+            korting_tekst = ""
+
         e.description = (
-            f"Hoi {user.mention}! Bedankt voor je bestelling.{korting_melding}\n\n"
+            f"Hoi {user.mention}! Bedankt voor je bestelling.{korting_tekst}\n"
             "Een stafflid stuurt je zo de betaalinstructies. "
             f"*Staff: gebruik `/afronden {b['id']}` zodra de bestelling is afgerond.*"
         )
@@ -700,6 +713,7 @@ class FinnsBot(commands.Bot):
         except Exception:
             pass
 
+        self.tree.clear_commands(guild=None)
         synced = await self.tree.sync()
         print(f"✅ Globaal gesynchroniseerd ({len(synced)} unieke commando's).")
         
@@ -859,10 +873,7 @@ async def review_cmd(
     sterren: app_commands.Range[int, 1, 5],
     tekst: app_commands.Range[str, 5, 500],
 ):
-    # Eerst zoeken op basis van het specifieke Kanaal-ID
     kanaal = interaction.guild.get_channel(KANAAL_REVIEWS_ID)
-    
-    # Fallback als het kanaal niet op ID te vinden is
     if kanaal is None:
         kanaal = discord.utils.get(interaction.guild.text_channels, name="reviews")
         
@@ -943,7 +954,7 @@ async def setup_embeds_cmd(interaction: discord.Interaction):
     for ch_id, (e, view, label) in doelen_by_id.items():
         kanaal = g.get_channel(ch_id)
         if kanaal is None:
-            ontbreekt.append(f"{label} ({ch_id})")
+            ontbreekt.append(f"# {label} ({ch_id})")
             continue
         if view:
             await kanaal.send(embed=e, view=view)
