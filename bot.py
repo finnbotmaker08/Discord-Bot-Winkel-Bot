@@ -29,16 +29,16 @@ if not TOKEN:
     raise ValueError("Geen DISCORD_TOKEN gevonden in je .env bestand!")
 
 # ==========================================
-# CONFIGURATIE & ID''S
+# CONFIGURATIE & ID'S
 # ==========================================
 GUILD_ID = int(os.getenv("GUILD_ID", 1556668456315781321))
 AUTOMATIC_JOIN_ROLE_ID = 1557813756288045229  # Rol die automatisch wordt gegeven bij join (Non-verified rol)
-VERIFIED_ROLE_ID = 1557808209924726889  # Rol die wordt toegevoegd bij verificatie
+VERIFIED_ROLE_ID = 1557808209924726889     # Rol die wordt toegevoegd bij verificatie
 UNVERIFIED_ROLE_ID = 1557813756288045229  # Rol die wordt weggehaald na verificatie
 VERIFY_LOG_CHANNEL_ID = 1558408492887572530  # Specifiek logkanaal voor verificaties
 WEEK_OVERZICHT_KANAAL_ID = 1558414858108534795  # Kanaal voor om de week op zondag 12:00
 
-# KANAAL ID''S VOOR SETUP_EMBEDS & WELKOM
+# KANAAL ID'S VOOR SETUP_EMBEDS & WELKOM
 KANAAL_REGELS_ID = 1557822036154384457
 KANAAL_WELKOM_ID = 1558409267021742180
 KANAAL_SUPPORT_ID = 1557822060967886999
@@ -484,7 +484,7 @@ async def maak_ticket(interaction: discord.Interaction, product=None, code=None)
             f"Hoi {user.mention}! Bedankt voor je bestelling.{korting_melding}\n\n"
             "Een stafflid stuurt je zo de betaalinstructies en regelt daarna alles met je. "
             "Heb je specifieke wensen voor je bot? Laat het hieronder weten!\n\n"
-            f"*Staff: gebruik `/afronden {b['id']}` zodرا de bestelling is afgerond.*"
+            f"*Staff: gebruik `/afronden {b['id']}` zodra de bestelling is afgerond.*"
         )
         await log_bestelling(guild, bestelling_embed(b, f"🆕 Nieuwe bestelling #{b['id']}"))
     else:
@@ -963,7 +963,10 @@ async def setup_embeds_cmd(interaction: discord.Interaction):
         if kanaal is None:
             ontbreekt.append(f"{label} ({ch_id})")
             continue
-        await kanaal.send(embed=e, view=view) if view else await kanaal.send(embed=e)
+        if view:
+            await kanaal.send(embed=e, view=view)
+        else:
+            await kanaal.send(embed=e)
         geplaatst.append(label)
 
     tekst = "✅ Geplaatst in: " + ", ".join(geplaatst) if geplaatst else "Niets geplaatst."
