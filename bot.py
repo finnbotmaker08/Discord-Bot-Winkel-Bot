@@ -694,13 +694,15 @@ class FinnsBot(commands.Bot):
 
         try:
             guild = discord.Object(id=GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
-            print(f"✅ Slash commando's gesynchroniseerd voor server ({len(synced)} commando's).")
-        except Exception as e:
-            print(f"⚠️ Server sync overgeslagen, fallback naar globale sync: {e}")
-            synced = await self.tree.sync()
-            print(f"✅ Globaal gesynchroniseerd ({len(synced)} commando's).")
+            # Wis eventuele oude/dubbele server specifieke commando's
+            self.tree.clear_commands(guild=guild)
+            await self.tree.sync(guild=guild)
+        except Exception:
+            pass
+
+        # Synchroniseer alle commando's uitsluitend globaal
+        synced = await self.tree.sync()
+        print(f"✅ Globaal gesynchroniseerd ({len(synced)} unieke commando's).")
         
         check_twee_wekelijkse_overzicht.start()
 
@@ -792,7 +794,7 @@ async def on_member_remove(member: discord.Member):
         pass
 
 # ==========================================
-# SLASH COMMANDO'S (UNIEK EN ZONDER DUBBELINGEN)
+# SLASH COMMANDO'S (UNIEK)
 # ==========================================
 @bot.tree.command(name="help", description="Laat alle commands zien")
 async def help_cmd(interaction: discord.Interaction):
