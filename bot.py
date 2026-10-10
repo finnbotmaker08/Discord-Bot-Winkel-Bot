@@ -954,7 +954,7 @@ async def setup_embeds_cmd(interaction: discord.Interaction):
     for ch_id, (e, view, label) in doelen_by_id.items():
         kanaal = g.get_channel(ch_id)
         if kanaal is None:
-            ontbreekt.append(f"# {label} ({ch_id})")
+            ontbreekt.append(f"{label} ({ch_id})")
             continue
         if view:
             await kanaal.send(embed=e, view=view)
