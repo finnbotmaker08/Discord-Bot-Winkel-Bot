@@ -707,7 +707,6 @@ class FinnsBot(commands.Bot):
         self.add_view(ShopView())
 
         try:
-            # Correcte synchronisatie zodat alle commando's geladen worden
             synced = await self.tree.sync()
             print(f"✅ Globaal gesynchroniseerd ({len(synced)} unieke commando's).")
         except Exception as e:
@@ -1063,11 +1062,14 @@ async def afronden_cmd(interaction: discord.Interaction, bestelling_id: int):
 
     lid = guild.get_member(b["gebruiker_id"])
     klant_rol = discord.utils.get(guild.roles, name=KLANT_ROL)
-    if lid and klant_rol:
-        try:
-            await lid.add_roles(klant_rol)
-        except discord.Forbidden:
-            pass
+    if lid:
+        if klant_rol:
+            try:
+                await lid.add_roles(klant_rol)
+            except discord.Forbidden:
+                print("⚠️ Bot mist permissie 'Rollen beheren' om de Klant-rol toe te kennen!")
+        else:
+            print(f"⚠️ Kon de rol '{KLANT_ROL}' niet vinden in de server!")
 
     ticket = guild.get_channel(b["ticket_kanaal_id"])
     if ticket:
