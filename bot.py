@@ -720,10 +720,18 @@ class FinnsBot(commands.Bot):
         self.add_view(SluitKnop())
         self.add_view(ShopView())
 
-        guild = discord.Object(id=GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
-        synced = await self.tree.sync(guild=guild)
-        print(f"✅ Slash commando's succesvol gesynchroniseerd ({len(synced)} commando's).")
+        try:
+            guild = discord.Object(id=GUILD_ID)
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            print(f"✅ Slash commando's succesvol gesynchroniseerd voor server ({len(synced)} commando's).")
+        except Exception as e:
+            print(f"⚠️ Kon commando's niet per server syncen (zorg dat de bot in de server zit en applications.commands heeft): {e}")
+            try:
+                synced = await self.tree.sync()
+                print(f"✅ Globaal gesynchroniseerd ({len(synced)} commando's).")
+            except Exception as e2:
+                print(f"❌ Globale sync mislukt: {e2}")
         
         # Start de periodieke taak voor het weekoverzicht
         check_twee_wekelijkse_overzicht.start()
