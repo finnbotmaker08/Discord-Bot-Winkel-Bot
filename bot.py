@@ -305,13 +305,14 @@ def help_embed(staff=False):
         e.add_field(
             name="🔒 Staff",
             value=(
+                "`/berichtbot`  stuur een bericht (met optionele afbeelding) als bot\n"
                 "`/bestellingen`  open bestellingen\n"
                 "`/afronden`  bestelling afronden\n"
                 "`/annuleren`  bestelling annuleren\n"
                 "`/product_toevoegen`, `/product_bewerken`, `/product_verwijderen`\n"
                 "`/kortingscode_maken`, `/kortingscode_verwijderen`, `/kortingscodes`\n"
                 "`/shopstats`  omzet en populairste product\n"
-                "`/ban`, `/kick`, `/clear`  moderatie commando's"
+                "`/ban`, `/kick`, `/clear`, `/purge`  moderatie commando's"
             ),
             inline=False,
         )
@@ -934,6 +935,26 @@ async def serverinfo_cmd(interaction: discord.Interaction):
 async def ping_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(f"🏓 Pong! {round(bot.latency * 1000)} ms")
 
+@bot.tree.command(name="berichtbot", description="Stuur een bericht (en optioneel een afbeelding) als de bot (staff)")
+@app_commands.describe(
+    bericht="Het tekstbericht dat de bot moet sturen",
+    afbeelding="Upload optioneel een afbeelding die meegestuurd moet worden"
+)
+async def berichtbot_cmd(
+    interaction: discord.Interaction,
+    bericht: str,
+    afbeelding: discord.Attachment = None
+):
+    if not await staff_check(interaction):
+        return
+
+    bestand = None
+    if afbeelding:
+        bestand = await afbeelding.to_file()
+
+    await interaction.channel.send(content=bericht, file=bestand)
+    await interaction.response.send_message("✅ Bericht succesvol verzonden!", ephemeral=True)
+
 @bot.tree.command(name="setup_embeds", description="Plaats mooie berichten in de infokanalen op basis van ID's (admin)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_embeds_cmd(interaction: discord.Interaction):
@@ -1252,6 +1273,12 @@ async def kick_command(interaction: discord.Interaction, member: discord.Member,
 @bot.tree.command(name="clear", description="Verwijder een aantal berichten in het kanaal.")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def clear_command(interaction: discord.Interaction, amount: int):
+    await interaction.channel.purge(limit=amount)
+    await interaction.response.send_message(f"{amount} berichten zijn succesvol verwijderd.", ephemeral=True)
+
+@bot.tree.command(name="purge", description="Verwijder een aantal berichten in het kanaal.")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def purge_command(interaction: discord.Interaction, amount: int):
     await interaction.channel.purge(limit=amount)
     await interaction.response.send_message(f"{amount} berichten zijn succesvol verwijderd.", ephemeral=True)
 
