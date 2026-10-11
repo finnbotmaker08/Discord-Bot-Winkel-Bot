@@ -707,8 +707,13 @@ class FinnsBot(commands.Bot):
         self.add_view(ShopView())
 
         try:
+            # OPTIE TEGEN DUBBELE COMMANDO'S: Eerst de oude cache leegmaken
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync()
+            
+            # Nu opnieuw alle unieke commando's registreren en synchroniseren
             synced = await self.tree.sync()
-            print(f"✅ Globaal gesynchroniseerd ({len(synced)} unieke commando's).")
+            print(f"🧹 Commando's gereset & opnieuw gesynchroniseerd ({len(synced)} unieke commando's).")
         except Exception as e:
             print(f"⚠️ Fout bij synchroniseren van commando's: {e}")
         
