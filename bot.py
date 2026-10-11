@@ -352,7 +352,6 @@ class GiveawayView(ui.View):
             self.deelnemers.add(interaction.user.id)
             await interaction.response.send_message("🎉 Je doet nu mee aan de giveaway!", ephemeral=True)
         
-        # Update het aantal deelnemers op de knop
         button.label = f"Meedoen 🎉 ({len(self.deelnemers)})"
         try:
             await interaction.message.edit(view=self)
@@ -1015,10 +1014,8 @@ class FinnsBot(commands.Bot):
         self.add_view(BetaalStartView())
 
         try:
-            self.tree.clear_commands(guild=None)
-            await self.tree.sync()
             synced = await self.tree.sync()
-            print(f"🧹 Commando's gereset & opnieuw gesynchroniseerd ({len(synced)} unieke commando's).")
+            print(f"✅ Succesvol gesynchroniseerd ({len(synced)} unieke commando's).")
         except Exception as e:
             print(f"⚠️ Fout bij synchroniseren van commando's: {e}")
         
@@ -1203,10 +1200,8 @@ async def giveaway_cmd(
     await interaction.response.send_message("✅ Giveaway gestart!", ephemeral=True)
     msg = await interaction.channel.send(embed=e, view=view)
 
-    # Wacht tot de giveaway is afgelopen
     await asyncio.sleep(seconden)
 
-    # Kies winnaars
     for child in view.children:
         child.disabled = True
 
