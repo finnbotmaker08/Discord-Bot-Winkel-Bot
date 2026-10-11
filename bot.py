@@ -980,16 +980,15 @@ class FinnsBot(commands.Bot):
         self.add_view(BetaalStartView())
 
         try:
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync(guild=None)
+            
             guild_obj = discord.Object(id=GUILD_ID)
             self.tree.copy_global_to(guild=guild_obj)
             synced = await self.tree.sync(guild=guild_obj)
-            print(f"✅ Server-specifieke commando's gesynchroniseerd ({len(synced)} stuks).")
+            print(f"✅ Schone commando's gesynchroniseerd ({len(synced)} stuks).")
         except Exception as e:
-            try:
-                synced = await self.tree.sync()
-                print(f"✅ Globaal gesynchroniseerd ({len(synced)} stuks).")
-            except Exception as err:
-                print(f"⚠️ Fout bij synchroniseren: {err}")
+            print(f"⚠️ Fout bij synchroniseren: {e}")
         
         check_twee_wekelijkse_overzicht.start()
 
@@ -1173,7 +1172,10 @@ async def giveaway_cmd(
 
     if not view.deelnemers:
         e.description = f"**Prijs:** {prijs}\n\n❌ **Giveaway afgelopen:** Er waren helaas geen deelnemers."
-        await msg.edit(embed=e, view=view)
+        try:
+            await msg.edit(embed=e, view=view)
+        except Exception:
+            pass
         await interaction.channel.send(f"❌ De giveaway voor **{prijs}** is afgelopen, maar er waren geen deelnemers.")
     else:
         aantal_gekozen = min(len(view.deelnemers), winnaars)
@@ -1185,7 +1187,10 @@ async def giveaway_cmd(
             f"**Winnaar(s):** {winnaars_mentions}\n\n"
             "🎉 **Giveaway is afgelopen!**"
         )
-        await msg.edit(embed=e, view=view)
+        try:
+            await msg.edit(embed=e, view=view)
+        except Exception:
+            pass
         await interaction.channel.send(f"🎉 Gefeliciteerd {winnaars_mentions}! Jullie hebben **{prijs}** gewonnen!")
 
 @bot.tree.command(name="betaalticket", description="Plaats het betaalpanel in het huidige kanaal (staff)")
