@@ -42,9 +42,8 @@ VERIFY_LOG_CHANNEL_ID = 1558408492887572530
 WEEK_OVERZICHT_KANAAL_ID = 1558414858108534795
 BESTELLINGEN_LOG_KANAAL_ID = 1557822081528369287
 
-# BETAALTICKET KANALEN
-CHANNEL_BETAAL_REVIEW = 1555919409162494012      # Kanaal voor 1e beoordeling aanvraag
-CHANNEL_BETAAL_CONFIRM = 1558561264295485470     # Kanaal voor status na "betaald" melding
+CHANNEL_BETAAL_REVIEW = 1558743224384757820      
+CHANNEL_BETAAL_CONFIRM = 1558743246883131432     
 
 KANAAL_REGELS_ID = 1557822036154384457
 KANAAL_WELKOM_ID = 1558409267021742180
@@ -67,7 +66,6 @@ STATE_BESTAND = Path(__file__).with_name("shutdown_state.json")
 SHOP_BESTAND = Path(__file__).with_name("shop_data.json")
 STATS_BESTAND = Path(__file__).with_name("weekly_stats.json")
 
-# In-memory opslag voor betaaltickets
 pending_pay_submissions = {}
 
 BOTS = [
@@ -96,9 +94,6 @@ REGELS = [
     "Gebruik de kanalen waarvoor ze bedoeld zijn.",
 ]
 
-# ==========================================
-# STATISTIEKEN INLADEN / BEWAREN
-# ==========================================
 def laad_stats():
     if STATS_BESTAND.exists():
         return json.loads(STATS_BESTAND.read_text(encoding="utf-8"))
@@ -109,9 +104,6 @@ def bewaar_stats(stats):
 
 WEEK_STATS = laad_stats()
 
-# ==========================================
-# HELPER FUNCTIES & EMBEDS
-# ==========================================
 STATUS_ICOON = {"open": "🟡", "afgerond": "🟢", "geannuleerd": "🔴"}
 
 def embed(titel, beschrijving=None):
@@ -324,7 +316,6 @@ def help_embed(staff=False):
     return e
 
 def verwerk_tijd(tijd_str: str) -> int:
-    """Zet een string zoals '10m', '1h', '30s' om naar seconden."""
     match = re.match(r"^(\d+)([s|m|h|d])$", tijd_str.lower().strip())
     if not match:
         return None
@@ -332,9 +323,6 @@ def verwerk_tijd(tijd_str: str) -> int:
     vermenigvuldiger = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     return aantal * vermenigvuldiger[eenheid]
 
-# ==========================================
-# GIVEAWAY SYSTEM
-# ==========================================
 class GiveawayView(ui.View):
     def __init__(self, prijs: str, eindtijd: datetime, winnaars_aantal: int):
         super().__init__(timeout=None)
@@ -358,9 +346,6 @@ class GiveawayView(ui.View):
         except Exception:
             pass
 
-# ==========================================
-# BETAALTICKET VIEWS & MODALS
-# ==========================================
 class BetaalAcceptModal(ui.Modal, title="Aanvraag Accepteren & Betaallink"):
     betaallink = ui.TextInput(label="Betaallink", placeholder="https://...", required=True)
     toelichting = ui.TextInput(label="Optionele toelichting", style=discord.TextStyle.paragraph, required=False)
@@ -404,7 +389,6 @@ class BetaalAcceptModal(ui.Modal, title="Aanvraag Accepteren & Betaallink"):
         except discord.Forbidden:
             await interaction.followup.send("❌ Kon geen DM sturen naar deze gebruiker (DM's gesloten).", ephemeral=True)
 
-
 class BetaalDenyModal(ui.Modal, title="Aanvraag Afwijzen"):
     reden = ui.TextInput(label="Reden van afwijzing", style=discord.TextStyle.paragraph, required=True)
 
@@ -433,7 +417,6 @@ class BetaalDenyModal(ui.Modal, title="Aanvraag Afwijzen"):
 
         await interaction.followup.send(f"Aanvraag afgewezen met reden: {self.reden.value}", ephemeral=True)
 
-
 class BetaalReviewView(ui.View):
     def __init__(self, target_member: discord.Member):
         super().__init__(timeout=None)
@@ -452,7 +435,6 @@ class BetaalReviewView(ui.View):
             await interaction.response.send_message("Alleen staff kan dit beoordelen.", ephemeral=True)
             return
         await interaction.response.send_modal(BetaalDenyModal(self.target_member, interaction.message, self))
-
 
 class ConfirmDeliveryModal(ui.Modal, title="Levering & Leveringsbestand"):
     bericht = ui.TextInput(label="Bericht aan de klant", style=discord.TextStyle.paragraph, required=True, placeholder="Bijv. Bedankt voor je aankoop! Hier is je product...")
@@ -489,7 +471,6 @@ class ConfirmDeliveryModal(ui.Modal, title="Levering & Leveringsbestand"):
 
         pending_pay_submissions.pop(self.target_member.id, None)
 
-
 class ConfirmDenyModal(ui.Modal, title="Betaling Afwijzen"):
     reden = ui.TextInput(label="Reden van afwijzing betaling", style=discord.TextStyle.paragraph, required=True)
 
@@ -517,7 +498,6 @@ class ConfirmDenyModal(ui.Modal, title="Betaling Afwijzen"):
         await interaction.followup.send(f"Betaling afgewezen met reden: {self.reden.value}", ephemeral=True)
         pending_pay_submissions.pop(self.target_member.id, None)
 
-
 class BetaalConfirmView(ui.View):
     def __init__(self, target_member: discord.Member):
         super().__init__(timeout=None)
@@ -536,7 +516,6 @@ class BetaalConfirmView(ui.View):
             await interaction.response.send_message("Alleen staff kan dit beoordelen.", ephemeral=True)
             return
         await interaction.response.send_modal(ConfirmDenyModal(self.target_member, interaction.message, self))
-
 
 class PayStepImageSentView(ui.View):
     def __init__(self, user_id: int):
@@ -559,8 +538,7 @@ class PayStepImageSentView(ui.View):
         except Exception:
             pass
 
-        guild = bot.guilds[0] if bot.guilds else None
-        target_channel = guild.get_channel(CHANNEL_BETAAL_REVIEW) if guild else None
+        target_channel = bot.get_channel(CHANNEL_BETAAL_REVIEW)
 
         if target_channel:
             e = discord.Embed(
@@ -575,7 +553,6 @@ class PayStepImageSentView(ui.View):
             await interaction.followup.send("✅ Je aanvraag is succesvol ingediend! Ons team beoordeelt je aanvraag zo snel mogelijk.", ephemeral=True)
         else:
             await interaction.followup.send("❌ Review kanaal niet gevonden op de server.", ephemeral=True)
-
 
 class PayStepMsgSubmittedView(ui.View):
     def __init__(self, user_id: int):
@@ -600,7 +577,6 @@ class PayStepMsgSubmittedView(ui.View):
 
         await interaction.user.send("📸 Stuur nu een afbeelding van de shop onder deze chat als bewijs:", view=PayStepImageSentView(self.user_id))
 
-
 class BetaalStartView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -617,10 +593,6 @@ class BetaalStartView(ui.View):
         except discord.Forbidden:
             await interaction.response.send_message("❌ Kan geen DM sturen. Zet je DM's open!", ephemeral=True)
 
-
-# ==========================================
-# OVERIGE VIEWS & BUTTONS
-# ==========================================
 class LogModeratieView(ui.View):
     def __init__(self, target_user_id: int):
         super().__init__(timeout=None)
@@ -865,9 +837,6 @@ class BestelKnop(ui.View):
             return
         await maak_ticket(interaction, product)
 
-# ==========================================
-# SHUTDOWN / STARTUP FUNCTIONALITEIT
-# ==========================================
 def overwrites_naar_data(kanaal):
     data = []
     for target, ow in kanaal.overwrites.items():
@@ -998,9 +967,6 @@ class BevestigShutdown(ui.View):
 def mag_shutdown(member) -> bool:
     return any(rol.id == SHUTDOWN_ROL_ID for rol in member.roles)
 
-# ==========================================
-# BOT KLASSE & SETUP HOOK
-# ==========================================
 class FinnsBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.all()
@@ -1014,18 +980,21 @@ class FinnsBot(commands.Bot):
         self.add_view(BetaalStartView())
 
         try:
-            synced = await self.tree.sync()
-            print(f"✅ Succesvol gesynchroniseerd ({len(synced)} unieke commando's).")
+            guild_obj = discord.Object(id=GUILD_ID)
+            self.tree.copy_global_to(guild=guild_obj)
+            synced = await self.tree.sync(guild=guild_obj)
+            print(f"✅ Server-specifieke commando's gesynchroniseerd ({len(synced)} stuks).")
         except Exception as e:
-            print(f"⚠️ Fout bij synchroniseren van commando's: {e}")
+            try:
+                synced = await self.tree.sync()
+                print(f"✅ Globaal gesynchroniseerd ({len(synced)} stuks).")
+            except Exception as err:
+                print(f"⚠️ Fout bij synchroniseren: {err}")
         
         check_twee_wekelijkse_overzicht.start()
 
 bot = FinnsBot()
 
-# ==========================================
-# PERIODIEKE TAAK & EVENTS
-# ==========================================
 @tasks.loop(hours=1)
 async def check_twee_wekelijkse_overzicht():
     nu = datetime.now(timezone.utc)
@@ -1129,8 +1098,7 @@ async def on_message(message: discord.Message):
 
             elif data.get("status") == "AWAITING_PAYMENT":
                 if message.content.strip().lower() == "betaald":
-                    guild = bot.guilds[0] if bot.guilds else None
-                    confirm_channel = guild.get_channel(CHANNEL_BETAAL_CONFIRM) if guild else None
+                    confirm_channel = bot.get_channel(CHANNEL_BETAAL_CONFIRM)
 
                     if confirm_channel:
                         e = discord.Embed(
@@ -1149,12 +1117,10 @@ async def on_message(message: discord.Message):
                         data["status"] = "VERIFYING_PAYMENT"
                     else:
                         await message.channel.send("❌ Er is een probleem opgetreden met de kanaalinstelling van de server.")
+        return
 
     await bot.process_commands(message)
 
-# ==========================================
-# SLASH COMMANDO'S
-# ==========================================
 @bot.tree.command(name="help", description="Laat alle commands zien")
 async def help_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(embed=help_embed(is_staff(interaction.user)), ephemeral=True)
@@ -1664,5 +1630,4 @@ async def purge_command(interaction: discord.Interaction, amount: int):
     await interaction.channel.purge(limit=amount)
     await interaction.response.send_message(f"{amount} berichten verwijderd.", ephemeral=True)
 
-# Start de bot
 bot.run(TOKEN)
