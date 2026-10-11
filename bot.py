@@ -1,1578 +1,556 @@
-import asyncio
-import json
 import os
 import random
-import re
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
+import asyncio
+import datetime
 import discord
-from discord import app_commands, ui
-from discord.ext import commands, tasks
+from discord.ext import commands
+from discord import app_commands
+from dotenv import load_dotenv
 
-# Eigen veilige .env parser
-env_path = Path(__file__).with_name(".env")
-if env_path.exists():
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            parts = line.split("=", 1)
-            key = parts[0].strip()
-            val = parts[1].strip().split(" #")[0].split("#")[0].strip()
-            if key:
-                os.environ[key] = val
-        elif not os.getenv("DISCORD_TOKEN"):
-            os.environ["DISCORD_TOKEN"] = line
-
+# Laad de configuratie uit het .env bestand
+load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+
 if not TOKEN:
-    raise ValueError("Geen DISCORD_TOKEN gevonden in je .env bestand!")
+    raise ValueError("❌ Geen DISCORD_TOKEN gevonden in het .env bestand!")
+
+# Configureer de benodigde intents voor de bot
+intents = discord.Intents.default()
+intents.members = True
+intents.messages = True
+intents.message_content = True
+intents.voice_states = True
+intents.guilds = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ==========================================
 # CONFIGURATIE & ID'S
 # ==========================================
-GUILD_ID = int(os.getenv("GUILD_ID", 1556668456315781321))
-AUTOMATIC_JOIN_ROLE_ID = 1557813756288045229
-VERIFIED_ROLE_ID = 1557808209924726889
-UNVERIFIED_ROLE_ID = 1557813756288045229
-KLANT_ROL_ID = 1556570231105781833
-VERIFY_LOG_CHANNEL_ID = 1558408492887572530
-WEEK_OVERZICHT_KANAAL_ID = 1558414858108534795
-BESTELLINGEN_LOG_KANAAL_ID = 1557822081528369287
+UNVERIFIED_ROLE_ID = 1558771402637705316
+VERIFIED_ROLE_ID = 1553800258675409042
+TICKET_COMMAND_ROLE_ID = 1551313880494374962
+VERIFICATION_LOG_CHANNEL_ID = 1558788150086606948
+WELCOME_CHANNEL_ID = 1551311044733968627
+COUNTING_CHANNEL_ID = 1554604994961997918
+ANTIRAID_LOG_CHANNEL_ID = 1553860034318958632  # Anti-raid logkanaal
 
-CHANNEL_BETAAL_REVIEW = 1558743224384757820      
-CHANNEL_BETAAL_CONFIRM = 1558743246883131432     
+TICKET_ROLE_MAPPING = {
+    "Support": 1551318416353132544,
+    "Marketing": 1551683186629812305,
+    "Management+": 1551314657241858088,
+    "Giveaway Claim": 1551678461930639522
+}
 
-KANAAL_REGELS_ID = 1557822036154384457
-KANAAL_WELKOM_ID = 1558409267021742180
-KANAAL_SUPPORT_ID = 1557822060967886999
-KANAAL_PRIJZEN_ID = 1557822048279994458
-KANAAL_BESTELLEN_ID = 1557822059646554194
-KANAAL_VERIFICATIE_ID = 1557822033545527493
-KANAAL_REVIEWS_ID = 1558517860513349702
+VERIFICATION_WORDS = ["VERIFIED", "SECURITY", "DISCORD", "ACCESS", "PROTECT", "WELCOME"]
 
-SERVERNAAM = "Finns Bots"
-KLEUR = 0x5865F2
-STAFF_ROL = "Staff"
-LID_ROL = "Lid"
-TICKET_CATEGORIE = "🎫 TICKETS"
+LOG_CHANNEL_IDS = {
+    "tickets": 1553859073567494334,
+    "leden": 1553860034318958632,
+    "berichten": 1553860126308569261,
+    "call": 1553860165499883591,
+    "role": 1553860220755910806,
+    "kanaal": 1553860275675992064
+}
 
-MEDEDELING_KANAAL_ID = 1556575385284648980
-SHUTDOWN_ROL_ID = 1556578093081305159
+# Geheugen voor het telsysteem en anti-spam tracking
+COUNTING_DATA = {COUNTING_CHANNEL_ID: {'current': 0, 'last_user': None}}
+SPAM_TRACKER = {}
 
-STATE_BESTAND = Path(__file__).with_name("shutdown_state.json")
-SHOP_BESTAND = Path(__file__).with_name("shop_data.json")
-STATS_BESTAND = Path(__file__).with_name("weekly_stats.json")
-
-pending_pay_submissions = {}
-
-BOTS = [
-    {
-        "naam": "🛡️ Security Bot",
-        "omschrijving": "Automoderatie, kick, ban, mute, warn, clear, slowmode, lockdown, unlock, suggestie.",
-        "prijs": 7.50,
-    },
-    {
-        "naam": "🤖 Normale Bot",
-        "omschrijving": "Een bot met 10 custom commands en installatie tutorial.",
-        "prijs": 10.00,
-    },
-    {
-        "naam": "⭐ Premium Bot",
-        "omschrijving": "15 custom commands, Security Bot inbegrepen, 24/7 hosting tutorial.",
-        "prijs": 15.00,
-    },
-]
-
-REGELS = [
-    "Wees respectvol tegen iedereen.",
-    "Geen spam, reclame of ongepaste inhoud.",
-    "Bestel en betaal alleen via een ticket in #bestellen.",
-    "Volg de aanwijzingen van het staffteam op.",
-    "Gebruik de kanalen waarvoor ze bedoeld zijn.",
-]
-
-def laad_stats():
-    if STATS_BESTAND.exists():
-        return json.loads(STATS_BESTAND.read_text(encoding="utf-8"))
-    return {"joins": 0, "verificaties": 0, "nieuwe_bestellingen": 0, "afgeronde_bestellingen": 0}
-
-def bewaar_stats(stats):
-    STATS_BESTAND.write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
-
-WEEK_STATS = laad_stats()
-STATUS_ICOON = {"open": "🟡", "afgerond": "🟢", "geannuleerd": "🔴"}
-
-def embed(titel, beschrijving=None):
-    e = discord.Embed(title=titel, description=beschrijving, colour=KLEUR)
-    e.set_footer(text=SERVERNAAM)
-    return e
-
-def euro(bedrag):
-    tekst = f"{bedrag:,.2f}"
-    return "€" + tekst.replace(",", "_").replace(".", ",").replace("_", ".")
-
-def laad_shop():
-    if SHOP_BESTAND.exists():
-        return json.loads(SHOP_BESTAND.read_text(encoding="utf-8"))
-    return {
-        "producten": [
-            {"id": i, "naam": b["naam"], "omschrijving": b["omschrijving"], "prijs": b["prijs"]}
-            for i, b in enumerate(BOTS, 1)
-        ],
-        "bestellingen": [],
-        "kortingscodes": {},
-        "volgend_product": len(BOTS) + 1,
-        "volgende_bestelling": 1,
-    }
-
-def bewaar_shop():
-    SHOP_BESTAND.write_text(json.dumps(SHOP, ensure_ascii=False, indent=2), encoding="utf-8")
-
-_eerste_keer = not SHOP_BESTAND.exists()
-SHOP = laad_shop()
-if _eerste_keer:
-    bewaar_shop()
-
-def vind_product(naam):
-    naam = naam.lower().strip()
-    for p in SHOP["producten"]:
-        if p["naam"].lower() == naam:
-            return p
-    for p in SHOP["producten"]:
-        if naam in p["naam"].lower():
-            return p
-    return None
-
-def vind_product_id(product_id):
-    return next((p for p in SHOP["producten"] if p["id"] == product_id), None)
-
-def vind_bestelling(bestelling_id):
-    return next((b for b in SHOP["bestellingen"] if b["id"] == bestelling_id), None)
-
-def is_staff(member):
-    return member.guild_permissions.administrator or any(r.name == STAFF_ROL for r in member.roles)
-
-async def staff_check(interaction):
-    if is_staff(interaction.user):
-        return True
-    await interaction.response.send_message("Alleen staff kan dit.", ephemeral=True)
-    return False
-
-async def product_autocomplete(interaction: discord.Interaction, current: str):
-    return [
-        app_commands.Choice(name=p["naam"][:100], value=p["naam"][:100])
-        for p in SHOP["producten"]
-        if current.lower() in p["naam"].lower()
-    ][:25]
-
-def maak_bestelling(user, product, procent, code, ticket_kanaal_id):
-    prijs = round(product["prijs"] * (100 - procent) / 100, 2)
-    b = {
-        "id": SHOP["volgende_bestelling"],
-        "gebruiker_id": user.id,
-        "gebruiker_naam": user.display_name,
-        "product_id": product["id"],
-        "product_naam": product["naam"],
-        "originele_prijs": product["prijs"],
-        "prijs": prijs,
-        "korting_procent": procent,
-        "korting_code": code,
-        "status": "open",
-        "ticket_kanaal_id": ticket_kanaal_id,
-        "aangemaakt": discord.utils.utcnow().isoformat(),
-        "review": False,
-    }
-    SHOP["volgende_bestelling"] += 1
-    SHOP["bestellingen"].append(b)
-    bewaar_shop()
-    
-    WEEK_STATS["nieuwe_bestellingen"] += 1
-    bewaar_stats(WEEK_STATS)
-    return b
-
-def product_embed(p):
-    e = embed(p["naam"], p["omschrijving"])
-    e.add_field(name="Prijs", value=euro(p["prijs"]))
-    return e
-
-def bestelling_embed(b, titel):
-    kleur = {"open": 0xFEE75C, "afgerond": 0x57F287, "geannuleerd": 0xED4245}[b["status"]]
-    e = discord.Embed(title=titel, colour=kleur)
-    e.add_field(name="Klant", value=f"<@{b['gebruiker_id']}>")
-    e.add_field(name="Product", value=b["product_naam"])
-    if b['korting_procent']:
-        e.add_field(name="Originele prijs", value=euro(b['originele_prijs']), inline=True)
-        e.add_field(name="Kortingscode", value=f"`{b['korting_code']}` ({b['korting_procent']}% korting)", inline=True)
-        e.add_field(name="Gecorrigeerde prijs", value=f"**{euro(b['prijs'])}**", inline=False)
-    else:
-        e.add_field(name="Prijs", value=f"**{euro(b['prijs'])}**", inline=False)
-    e.add_field(name="Status", value=f"{STATUS_ICOON[b['status']]} {b['status']}", inline=False)
-    e.set_footer(text=SERVERNAAM)
-    return e
-
-async def log_bestelling(guild, e):
-    kanaal = guild.get_channel(BESTELLINGEN_LOG_KANAAL_ID)
-    if kanaal is None:
-        kanaal = discord.utils.get(guild.text_channels, name="bestellingen-log")
-    if kanaal:
-        await kanaal.send(embed=e)
-
-def bots_embed(titel="🤖 Onze bots"):
-    if not SHOP["producten"]:
-        return embed(titel, "Er zijn nog geen producten. Kom snel terug!")
-    e = embed(titel, "Dit is wat we nu verkopen:")
-    for p in SHOP["producten"]:
-        e.add_field(name=f"{p['naam']}  -  {euro(p['prijs'])}", value=p["omschrijving"], inline=False)
-    return e
-
-def prijzen_embed():
-    e = discord.Embed(
-        title="💶 Prijzenlijst",
-        description="Transparante prijzen voor al onze diensten en bots:",
-        colour=KLEUR
-    )
-    e.add_field(
-        name="Security Bot\n€7,50",
-        value=(
-            "Automoderatie, kick, ban, mute, warn, clear, slowmode, lockdown, unlock, suggestie. "
-            "+ Een tutorial hoe je alles moet downloaden en installeren zit erbij."
-        ),
-        inline=False
-    )
-    e.add_field(
-        name="Normale Bot\n€10,00",
-        value=(
-            "Een bot met 10 custom commands. Een tutorial hoe je alles moet downloaden en "
-            "installeren zit erbij."
-        ),
-        inline=False
-    )
-    e.add_field(
-        name="Premium Bot\n€15,00",
-        value=(
-            "Premium bot. Je kan 15 custom commands kiezen, Security Bot zit erbij. "
-            "Tutorial hoe je alles moet downloaden, installeren en 24/7 hosten."
-        ),
-        inline=False
-    )
-    e.set_footer(text=SERVERNAAM)
-    return e
-
-def help_embed(staff=False):
-    e = embed(
-        "📖 Commands",
-        "`/shop`  open de winkel en kies een product\n"
-        "`/bots`  de bots die we verkopen\n"
-        "`/prijzen`  de prijslijst\n"
-        "`/bestellen`  bestel direct een product (met optionele kortingscode)\n"
-        "`/kortingscodegebruik`  controleer of een kortingscode geldig is\n"
-        "`/mijnbestellingen`  je bestelgeschiedenis\n"
-        "`/review`  laat een review achter\n"
-        "`/serverinfo`  info over de server\n"
-        "`/ping`  snelheidstest",
-    )
-    if staff:
-        e.add_field(
-            name="🔒 Staff",
-            value=(
-                "`/berichtbot`  stuur een bericht (met optionele afbeelding) als bot\n"
-                "`/betaalticket`  plaats het betaalpanel in het kanaal\n"
-                "`/giveaway`  start een winactie\n"
-                "`/bestellingen`  open bestellingen\n"
-                "`/afronden`  bestelling afronden\n"
-                "`/annuleren`  bestelling annuleren\n"
-                "`/product_toevoegen`, `/product_bewerken`, `/product_verwijderen`\n"
-                "`/kortingscode_maken`, `/kortingscode_verwijderen`, `/kortingscodes`\n"
-                "`/shopstats`  omzet en populairste product\n"
-                "`/ban`, `/kick`, `/clear`, `/purge`  moderatie commando's"
-            ),
-            inline=False,
-        )
-    return e
-
-def verwerk_tijd(tijd_str: str) -> int:
-    match = re.match(r"^(\d+)([s|m|h|d])$", tijd_str.lower().strip())
-    if not match:
+async def get_log_channel(guild: discord.Guild, name: str) -> discord.TextChannel | None:
+    channel_id = LOG_CHANNEL_IDS.get(name)
+    if not channel_id:
         return None
-    aantal, eenheid = int(match.group(1)), match.group(2)
-    vermenigvuldiger = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-    return aantal * vermenigvuldiger[eenheid]
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        try:
+            channel = await guild.fetch_channel(channel_id)
+        except Exception:
+            return None
+    return channel
 
-class GiveawayView(ui.View):
-    def __init__(self, prijs: str, eindtijd: datetime, winnaars_aantal: int):
+
+# ==========================================
+# MODERATIE & BAN VIEW (Voor Verificatie & Anti-Raid)
+# ==========================================
+class ModerationActionView(discord.ui.View):
+    def __init__(self, target_member_id: int):
         super().__init__(timeout=None)
-        self.prijs = prijs
-        self.eindtijd = eindtijd
-        self.winnaars_aantal = winnaars_aantal
-        self.deelnemers = set()
+        self.target_member_id = target_member_id
 
-    @ui.button(label="Meedoen 🎉", style=discord.ButtonStyle.blurple, custom_id="giveaway_join_btn")
-    async def meedoen(self, interaction: discord.Interaction, button: ui.Button):
-        if interaction.user.id in self.deelnemers:
-            self.deelnemers.remove(interaction.user.id)
-            await interaction.response.send_message("❌ Je hebt je uitgeschreven voor de giveaway.", ephemeral=True)
-        else:
-            self.deelnemers.add(interaction.user.id)
-            await interaction.response.send_message("🎉 Je doet nu mee aan de giveaway!", ephemeral=True)
-        
-        button.label = f"Meedoen 🎉 ({len(self.deelnemers)})"
-        try:
-            await interaction.message.edit(view=self)
-        except Exception:
-            pass
-
-class BetaalAcceptModal(ui.Modal, title="Aanvraag Accepteren & Betaallink"):
-    betaallink = ui.TextInput(label="Betaallink", placeholder="https://...", required=True)
-    toelichting = ui.TextInput(label="Optionele toelichting", style=discord.TextStyle.paragraph, required=False)
-
-    def __init__(self, target_member: discord.Member, message: discord.Message, view_inst: ui.View):
-        super().__init__()
-        self.target_member = target_member
-        self.message = message
-        self.view_inst = view_inst
-
-    async def on_submit(self, interaction: discord.Interaction):
+    @discord.ui.button(label="Ban User", style=discord.ButtonStyle.danger, emoji="🔨", custom_id="mod_ban_btn_global")
+    async def ban_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
-
-        for child in self.view_inst.children:
-            child.disabled = True
-        try:
-            await self.message.edit(view=self.view_inst)
-        except Exception:
-            pass
-
-        if self.target_member.id in pending_pay_submissions:
-            pending_pay_submissions[self.target_member.id]["status"] = "AWAITING_PAYMENT"
-
-        dm_text = (
-            f"✅ **Jouw aanvraag is goedgekeurd!**\n\n"
-            f"Om je bestelling definitief te maken, verzoeken wij je de onderstaande betaallink te voldoen:\n"
-            f"🔗 **Betaallink:** {self.betaallink.value}\n\n"
-        )
-        if self.toelichting.value:
-            dm_text += f"💬 **Toelichting:** {self.toelichting.value}\n\n"
-
-        dm_text += (
-            "📌 **Volgende stap:**\n"
-            "Zodra de betaling is afgerond, reageer dan op deze chat met de exacte tekst: **`betaald`**.\n"
-            "Ons team zal je betaling direct controleren en je bestelling leveren!"
-        )
-
-        try:
-            await self.target_member.send(dm_text)
-            await interaction.followup.send("✅ Betaallink succesvol verstuurd naar de klant via DM!", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Kon geen DM sturen naar deze gebruiker (DM's gesloten).", ephemeral=True)
-
-class BetaalDenyModal(ui.Modal, title="Aanvraag Afwijzen"):
-    reden = ui.TextInput(label="Reden van afwijzing", style=discord.TextStyle.paragraph, required=True)
-
-    def __init__(self, target_member: discord.Member, message: discord.Message, view_inst: ui.View):
-        super().__init__()
-        self.target_member = target_member
-        self.message = message
-        self.view_inst = view_inst
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        for child in self.view_inst.children:
-            child.disabled = True
-        try:
-            await self.message.edit(view=self.view_inst)
-        except Exception:
-            pass
-
-        pending_pay_submissions.pop(self.target_member.id, None)
-
-        try:
-            await self.target_member.send(f"❌ Jouw aanvraag voor een bestelling is afgewezen.\n**Reden:** {self.reden.value}")
-        except discord.Forbidden:
-            pass
-
-        await interaction.followup.send(f"Aanvraag afgewezen met reden: {self.reden.value}", ephemeral=True)
-
-class BetaalReviewView(ui.View):
-    def __init__(self, target_member: discord.Member):
-        super().__init__(timeout=None)
-        self.target_member = target_member
-
-    @ui.button(label="Accepteren", style=discord.ButtonStyle.green, custom_id="pay_review_accept")
-    async def accept(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_staff(interaction.user):
-            await interaction.response.send_message("Alleen staff kan dit beoordelen.", ephemeral=True)
+        if not interaction.user.guild_permissions.ban_members:
+            await interaction.followup.send("❌ Geen permissie om leden te bannen.", ephemeral=True)
             return
-        await interaction.response.send_modal(BetaalAcceptModal(self.target_member, interaction.message, self))
-
-    @ui.button(label="Afwijzen", style=discord.ButtonStyle.red, custom_id="pay_review_deny")
-    async def deny(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_staff(interaction.user):
-            await interaction.response.send_message("Alleen staff kan dit beoordelen.", ephemeral=True)
-            return
-        await interaction.response.send_modal(BetaalDenyModal(self.target_member, interaction.message, self))
-
-class ConfirmDeliveryModal(ui.Modal, title="Levering & Leveringsbestand"):
-    bericht = ui.TextInput(label="Bericht aan de klant", style=discord.TextStyle.paragraph, required=True, placeholder="Bijv. Bedankt voor je aankoop! Hier is je product...")
-    downloadfile = ui.TextInput(label="Downloadlink / Bestand link", required=True, placeholder="https://...")
-
-    def __init__(self, target_member: discord.Member, message: discord.Message, view_inst: ui.View):
-        super().__init__()
-        self.target_member = target_member
-        self.message = message
-        self.view_inst = view_inst
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        for child in self.view_inst.children:
-            child.disabled = True
-        try:
-            await self.message.edit(view=self.view_inst)
-        except Exception:
-            pass
-
-        e = discord.Embed(
-            title="🎉 Je bestelling is geleverd!",
-            description=f"{self.bericht.value}\n\n📦 **Download/Bestand:** {self.downloadfile.value}",
-            color=discord.Color.green()
-        )
-        e.set_footer(text=SERVERNAAM)
-
-        try:
-            await self.target_member.send(embed=e)
-            await interaction.followup.send("✅ Levering succesvol naar de klant gestuurd!", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Kon de levering niet in DM sturen.", ephemeral=True)
-
-        pending_pay_submissions.pop(self.target_member.id, None)
-
-class ConfirmDenyModal(ui.Modal, title="Betaling Afwijzen"):
-    reden = ui.TextInput(label="Reden van afwijzing betaling", style=discord.TextStyle.paragraph, required=True)
-
-    def __init__(self, target_member: discord.Member, message: discord.Message, view_inst: ui.View):
-        super().__init__()
-        self.target_member = target_member
-        self.message = message
-        self.view_inst = view_inst
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        for child in self.view_inst.children:
-            child.disabled = True
-        try:
-            await self.message.edit(view=self.view_inst)
-        except Exception:
-            pass
-
-        try:
-            await self.target_member.send(f"❌ Je betaling kon niet geverifieerd worden.\n**Reden:** {self.reden.value}")
-        except discord.Forbidden:
-            pass
-
-        await interaction.followup.send(f"Betaling afgewezen met reden: {self.reden.value}", ephemeral=True)
-        pending_pay_submissions.pop(self.target_member.id, None)
-
-class BetaalConfirmView(ui.View):
-    def __init__(self, target_member: discord.Member):
-        super().__init__(timeout=None)
-        self.target_member = target_member
-
-    @ui.button(label="Accepteren", style=discord.ButtonStyle.green, custom_id="pay_confirm_accept")
-    async def accept(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_staff(interaction.user):
-            await interaction.response.send_message("Alleen staff kan dit beoordelen.", ephemeral=True)
-            return
-        await interaction.response.send_modal(ConfirmDeliveryModal(self.target_member, interaction.message, self))
-
-    @ui.button(label="Afwijzen", style=discord.ButtonStyle.red, custom_id="pay_confirm_deny")
-    async def deny(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_staff(interaction.user):
-            await interaction.response.send_message("Alleen staff kan dit beoordelen.", ephemeral=True)
-            return
-        await interaction.response.send_modal(ConfirmDenyModal(self.target_member, interaction.message, self))
-
-class PayStepImageSentView(ui.View):
-    def __init__(self, user_id: int):
-        super().__init__(timeout=300)
-        self.user_id = user_id
-
-    @ui.button(label="Afbeelding verstuurd", style=discord.ButtonStyle.blurple, emoji="📸")
-    async def image_sent(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.defer(ephemeral=True)
-
-        data = pending_pay_submissions.get(self.user_id)
-        if not data or not data.get("image_url"):
-            await interaction.followup.send("⚠️ Geen afbeelding ontvangen! Stuur eerst een afbeelding hieronder.", ephemeral=True)
-            return
-
-        for child in self.children:
-            child.disabled = True
-        try:
-            await interaction.message.edit(view=self)
-        except Exception:
-            pass
-
-        target_channel = bot.get_channel(CHANNEL_BETAAL_REVIEW)
-
-        if target_channel:
-            e = discord.Embed(
-                title="💳 Nieuwe Betaalaanvraag",
-                description=f"**Klant:** {interaction.user.mention} ({interaction.user.name})\n**Gevraagd Product:** {data['product']}",
-                color=discord.Color.blue()
-            )
-            e.set_image(url=data["image_url"])
-            e.set_footer(text=SERVERNAAM)
-
-            await target_channel.send(embed=e, view=BetaalReviewView(interaction.user))
-            await interaction.followup.send("✅ Je aanvraag is succesvol ingediend! Ons team beoordeelt je aanvraag zo snel mogelijk.", ephemeral=True)
-        else:
-            await interaction.followup.send("❌ Review kanaal niet gevonden op de server.", ephemeral=True)
-
-class PayStepMsgSubmittedView(ui.View):
-    def __init__(self, user_id: int):
-        super().__init__(timeout=300)
-        self.user_id = user_id
-
-    @ui.button(label="Bericht indienen", style=discord.ButtonStyle.green, emoji="📩")
-    async def msg_submitted(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.defer(ephemeral=True)
-
-        data = pending_pay_submissions.get(self.user_id)
-        if not data or not data.get("product"):
-            await interaction.followup.send("⚠️ Je hebt nog geen productnaam/bericht getypt!", ephemeral=True)
-            return
-
-        for child in self.children:
-            child.disabled = True
-        try:
-            await interaction.message.edit(view=self)
-        except Exception:
-            pass
-
-        await interaction.user.send("📸 Stuur nu een afbeelding van de shop onder deze chat als bewijs:", view=PayStepImageSentView(self.user_id))
-
-class BetaalStartView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @ui.button(label="Start Betaal Aanvraag", style=discord.ButtonStyle.success, emoji="💳", custom_id="betaal_start_btn_persistent")
-    async def start_btn(self, interaction: discord.Interaction, button: ui.Button):
-        user_id = interaction.user.id
-        pending_pay_submissions[user_id] = {"product": None, "image_url": None, "status": "SETUP"}
-
-        try:
-            dm = await interaction.user.create_dm()
-            await dm.send("Welk product zou je willen bestellen? Typ de naam van het product hieronder in de chat:", view=PayStepMsgSubmittedView(user_id))
-            await interaction.response.send_message("Check je DM om het betaalproces te starten!", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.response.send_message("❌ Kan geen DM sturen. Zet je DM's open!", ephemeral=True)
-
-class LogModeratieView(ui.View):
-    def __init__(self, target_user_id: int):
-        super().__init__(timeout=None)
-        self.target_user_id = target_user_id
-
-    @ui.button(label="Ban user", emoji="🔨", style=discord.ButtonStyle.danger, custom_id="log_ban_user_btn")
-    async def ban_user(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_staff(interaction.user):
-            await interaction.response.send_message("Alleen staff kan dit doen.", ephemeral=True)
-            return
-        
         guild = interaction.guild
-        member = guild.get_member(self.target_user_id)
-        target_name = member.name if member else f"ID: {self.target_user_id}"
-
+        member = guild.get_member(self.target_member_id)
         try:
-            await guild.ban(discord.Object(id=self.target_user_id), reason=f"Gebanned via logknoppen door {interaction.user}")
-            await interaction.response.send_message(f"🔨 Gebruiker `{target_name}` is succesvol gebanned.", ephemeral=True)
+            if member:
+                await guild.ban(member, reason=f"Gebanned via log door {interaction.user}")
+            else:
+                user = await bot.fetch_user(self.target_member_id)
+                await guild.ban(user, reason=f"Gebanned via log door {interaction.user}")
             for child in self.children:
                 child.disabled = True
             await interaction.message.edit(view=self)
+            await interaction.followup.send(f"🔨 Gebruiker is gebanned door {interaction.user.mention}.", ephemeral=False)
         except Exception as e:
-            await interaction.response.send_message(f"Kon gebruiker niet bannen: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Fout bij bannen: {e}", ephemeral=True)
 
-    @ui.button(label="Kick user", emoji="🛡️", style=discord.ButtonStyle.secondary, custom_id="log_kick_user_btn")
-    async def kick_user(self, interaction: discord.Interaction, button: ui.Button):
-        if not is_staff(interaction.user):
-            await interaction.response.send_message("Alleen staff kan dit doen.", ephemeral=True)
+    @discord.ui.button(label="Kick User", style=discord.ButtonStyle.secondary, emoji="🛡️", custom_id="mod_kick_btn_global")
+    async def kick_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        if not interaction.user.guild_permissions.kick_members:
+            await interaction.followup.send("❌ Geen permissie om leden te kicken.", ephemeral=True)
             return
-        
         guild = interaction.guild
-        member = guild.get_member(self.target_user_id)
-        if not member:
-            await interaction.response.send_message("Kan de gebruiker niet vinden in de server (misschien al weg).", ephemeral=True)
-            return
-
-        target_name = member.name
+        member = guild.get_member(self.target_member_id)
         try:
-            await member.kick(reason=f"Gekicked via logknoppen door {interaction.user}")
-            await interaction.response.send_message(f"🛡️ Gebruiker `{target_name}` is succesvol gekicked.", ephemeral=True)
-            for child in self.children:
-                child.disabled = True
-            await interaction.message.edit(view=self)
+            if member:
+                await guild.kick(member, reason=f"Gekicked via log door {interaction.user}")
+                for child in self.children:
+                    child.disabled = True
+                await interaction.message.edit(view=self)
+                await interaction.followup.send(f"🛡️ Gebruiker is gekicked door {interaction.user.mention}.", ephemeral=False)
+            else:
+                await interaction.followup.send("⚠️ Gebruiker niet gevonden op de server.", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"Kon gebruiker niet kicken: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Fout bij kicken: {e}", ephemeral=True)
 
-class VerificationModal(ui.Modal, title="Server Verificatie"):
-    antwoord = ui.TextInput(
-        label="Typ hieronder het woord: VERIFIED",
-        placeholder="Typ hier...",
-        required=True,
-        max_length=20
-    )
+
+# ==========================================
+# VERIFICATIE SYSTEEM
+# ==========================================
+class VerificationModal(discord.ui.Modal):
+    def __init__(self, target_word: str):
+        super().__init__(title="Server Beveiliging Verificatie")
+        self.target_word = target_word
+        self.word_input = discord.ui.TextInput(
+            label=f"Typ exact het woord: {target_word}",
+            placeholder=target_word,
+            required=True,
+            max_length=20
+        )
+        self.add_item(self.word_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        if self.antwoord.value.strip().upper() == "VERIFIED":
+        await interaction.response.defer(ephemeral=True)
+        if self.word_input.value.strip().upper() == self.target_word:
             guild = interaction.guild
             member = interaction.user
-            verified_role = guild.get_role(VERIFIED_ROLE_ID)
             unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
+            verified_role = guild.get_role(VERIFIED_ROLE_ID)
             
-            try:
-                if verified_role:
-                    await member.add_roles(verified_role)
-                if unverified_role and unverified_role in member.roles:
-                    await member.remove_roles(unverified_role)
-                
-                await interaction.response.send_message("Je bent succesvol geverifieerd!", ephemeral=True)
-                
-                WEEK_STATS["verificaties"] += 1
-                bewaar_stats(WEEK_STATS)
+            if not unverified_role or not verified_role:
+                await interaction.followup.send("⚠️ Configuratiefout: Rollen niet gevonden.", ephemeral=True)
+                return
 
-                log_channel = guild.get_channel(VERIFY_LOG_CHANNEL_ID)
+            try:
+                if unverified_role in member.roles:
+                    await member.remove_roles(unverified_role, reason="Verificatie voltooid")
+                await member.add_roles(verified_role, reason="Verificatie voltooid")
+                await interaction.followup.send("✅ Verificatie geslaagd! Je hebt nu toegang.", ephemeral=True)
+
+                log_channel = guild.get_channel(VERIFICATION_LOG_CHANNEL_ID)
+                if not log_channel:
+                    try:
+                        log_channel = await guild.fetch_channel(VERIFICATION_LOG_CHANNEL_ID)
+                    except Exception:
+                        log_channel = None
+
                 if log_channel:
-                    discord_join = discord.utils.format_dt(member.created_at, "R")
-                    server_join = discord.utils.format_dt(member.joined_at, "R") if member.joined_at else "Onbekend"
-                    
-                    e = discord.Embed(
-                        title="✅ Nieuwe Verificatie",
-                        description=f"{member.mention} heeft zich succesvol geverifieerd.",
-                        color=discord.Color.green()
+                    created_at = member.created_at
+                    now = datetime.datetime.now(datetime.timezone.utc)
+                    delta = now - created_at
+                    age_str = f"{delta.days // 365} jaar, {(delta.days % 365) // 30} maanden"
+
+                    embed = discord.Embed(
+                        title="🛡️ Lid Geverifieerd",
+                        description=f"Gebruiker {member.mention} heeft de verificatie doorlopen.",
+                        color=discord.Color.green(),
+                        timestamp=now
                     )
                     if member.display_avatar:
-                        e.set_thumbnail(url=member.display_avatar.url)
+                        embed.set_thumbnail(url=member.display_avatar.url)
+                    embed.add_field(name="👤 Naam", value=f"`{member.name}`", inline=True)
+                    embed.add_field(name="🆔 ID", value=f"`{member.id}`", inline=True)
+                    embed.add_field(name="📅 Leeftijd", value=f"{created_at.strftime('%d-%m-%Y')} ({age_str})", inline=False)
                     
-                    e.add_field(name="Naam", value=f"{member.name} ({member.display_name})", inline=True)
-                    e.add_field(name="Discord ID", value=str(member.id), inline=True)
-                    e.add_field(name="Account aangemaakt", value=discord_join, inline=True)
-                    e.add_field(name="Server gejoined", value=server_join, inline=True)
-                    e.set_footer(text=SERVERNAAM)
-                    
-                    await log_channel.send(embed=e, view=LogModeratieView(member.id))
-            except discord.Forbidden:
-                await interaction.response.send_message("❌ De bot mist permissies!", ephemeral=True)
-            except Exception as err:
-                await interaction.response.send_message(f"Fout bij toewijzen van rollen: {err}", ephemeral=True)
+                    view = ModerationActionView(target_member_id=member.id)
+                    await log_channel.send(embed=embed, view=view)
+            except Exception as e:
+                await interaction.followup.send(f"❌ Fout bij toekennen rollen: {e}", ephemeral=True)
         else:
-            await interaction.response.send_message("Onjuist antwoord! Probeer het opnieuw.", ephemeral=True)
+            await interaction.followup.send("❌ Verificatie mislukt. Onjuist woord.", ephemeral=True)
 
-class VerificationView(ui.View):
+
+class VerificationView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @ui.button(label="Verifieer jezelf", style=discord.ButtonStyle.green, custom_id="verify_button_persistent")
-    async def verify_button(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(VerificationModal())
+    @discord.ui.button(label="Verifiëren", style=discord.ButtonStyle.success, emoji="🔒", custom_id="verify_btn_antiraid")
+    async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(VerificationModal(target_word=random.choice(VERIFICATION_WORDS)))
 
-async def maak_ticket(interaction: discord.Interaction, product=None, code=None):
-    guild = interaction.guild
-    user = interaction.user
 
-    for ch in guild.text_channels:
-        if ch.topic == f"ticket:{user.id}":
-            await interaction.response.send_message(f"Je hebt al een open ticket: {ch.mention}", ephemeral=True)
-            return
-
-    procent, gebruikte_code = 0, None
-    if code:
-        sleutel = code.strip().upper()
-        if sleutel not in SHOP["kortingscodes"]:
-            await interaction.response.send_message("❌ Die kortingscode is ongeldig.", ephemeral=True)
-            return
-        procent, gebruikte_code = SHOP["kortingscodes"][sleutel], sleutel
-
-    staff = discord.utils.get(guild.roles, name=STAFF_ROL)
-    toegang = discord.PermissionOverwrite(
-        view_channel=True, send_messages=True, read_message_history=True, attach_files=True
-    )
-
-    categorie = discord.utils.get(guild.categories, name=TICKET_CATEGORIE)
-    if categorie is None:
-        cat_overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
-        if staff:
-            cat_overwrites[staff] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
-        categorie = await guild.create_category(TICKET_CATEGORIE, overwrites=cat_overwrites)
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        user: toegang,
-        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
-    }
-    if staff:
-        overwrites[staff] = toegang
-
-    kanaal = await guild.create_text_channel(
-        f"ticket-{user.name}",
-        category=categorie,
-        topic=f"ticket:{user.id}",
-        overwrites=overwrites,
-    )
-
-    if product:
-        b = maak_bestelling(user, product, procent, gebruikte_code, kanaal.id)
-        e = bestelling_embed(b, f"🛒 Bestelling #{b['id']}")
-        
-        if gebruikte_code:
-            korting_tekst = (
-                f"\n🎉 **Kortingscode geactiveerd:** `{gebruikte_code}`\n"
-                f"• **Originele prijs:** ~~{euro(b['originele_prijs'])}~~\n"
-                f"• **Korting:** {procent}%\n"
-                f"• **Gecorrigeerde prijs:** **{euro(b['prijs'])}**\n"
-            )
-        else:
-            korting_tekst = ""
-
-        e.description = (
-            f"Hoi {user.mention}! Bedankt voor je bestelling.{korting_tekst}\n"
-            "Een stafflid stuurt je zo de betaalinstructies. "
-            f"*Staff: gebruik `/afronden {b['id']}` zodra de bestelling is afgerond.*"
-        )
-        await log_bestelling(guild, bestelling_embed(b, f"🆕 Nieuwe bestelling #{b['id']}"))
-    else:
-        e = embed(
-            "🎫 Nieuw ticket",
-            f"Hoi {user.mention}! Vertel welke bot je wilt bestellen of waar je hulp bij nodig hebt."
-        )
-    ping = staff.mention if staff else ""
-    await kanaal.send(content=f"{user.mention} {ping}", embed=e, view=SluitKnop())
-    await interaction.response.send_message(f"Je ticket is aangemaakt: {kanaal.mention}", ephemeral=True)
-
-class TicketKnop(ui.View):
-    def __init__(self):
+# ==========================================
+# TICKET SYSTEEM
+# ==========================================
+class TicketControlView(discord.ui.View):
+    def __init__(self, opener: discord.Member):
         super().__init__(timeout=None)
+        self.opener = opener
+        self.claimed_by = None
 
-    @ui.button(label="Open een ticket", emoji="🎫", style=discord.ButtonStyle.primary, custom_id="ticket_openen_persistent")
-    async def openen(self, interaction: discord.Interaction, button: ui.Button):
-        await maak_ticket(interaction)
+    @discord.ui.button(label="Claim Ticket", style=discord.ButtonStyle.primary, emoji="📌", custom_id="ticket_claim_btn_antiraid")
+    async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        channel = interaction.channel
+        staff_member = interaction.user
 
-class SluitKnop(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @ui.button(label="Ticket sluiten", emoji="🔒", style=discord.ButtonStyle.danger, custom_id="ticket_sluiten_persistent")
-    async def sluiten(self, interaction: discord.Interaction, button: ui.Button):
-        kanaal = interaction.channel
-        staff = discord.utils.get(interaction.guild.roles, name=STAFF_ROL)
-        is_eigenaar = kanaal.topic == f"ticket:{interaction.user.id}"
-        is_staff_user = staff in interaction.user.roles if staff else False
-        if not (is_eigenaar or is_staff_user or interaction.user.guild_permissions.administrator):
-            await interaction.response.send_message("Alleen de ticket-eigenaar of staff kan dit sluiten.", ephemeral=True)
+        allowed_roles = list(TICKET_ROLE_MAPPING.values())
+        is_staff = any(r.id in allowed_roles for r in staff_member.roles) or staff_member.guild_permissions.administrator
+        if not is_staff:
+            await interaction.followup.send("❌ Alleen medewerkers kunnen dit claimen.", ephemeral=True)
             return
-        await interaction.response.send_message("🔒 Ticket wordt over 5 seconden gesloten...")
+
+        self.claimed_by = staff_member
+        try:
+            for role_id in allowed_roles:
+                role = guild.get_role(role_id)
+                if role:
+                    await channel.set_permissions(role, send_messages=False)
+            await channel.set_permissions(staff_member, send_messages=True, view_channel=True)
+
+            button.disabled = True
+            button.label = f"Geclaimd door {staff_member.display_name}"
+            await interaction.message.edit(view=self)
+            await interaction.followup.send(f"📌 Geclaimd door {staff_member.mention}.")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Fout: {e}", ephemeral=True)
+
+    @discord.ui.button(label="Sluit Ticket", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="ticket_close_btn_antiraid")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        channel = interaction.channel
+        closer = interaction.user
+
+        await interaction.followup.send("⚠️ Transcript wordt gemaakt, kanaal sluit over 5 seconden...", ephemeral=False)
+
+        transcript = f"<html><body><h2>Transcript: {channel.name}</h2><hr>"
+        async for msg in channel.history(limit=None, oldest_first=True):
+            transcript += f"<p><b>{msg.author}</b> ({msg.created_at.strftime('%d-%m-%Y %H:%M')}): {msg.content}</p>"
+        transcript += "</body></html>"
+
+        filename = f"transcript-{channel.name}.html"
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(transcript)
+
+        log_channel = await get_log_channel(guild, "tickets")
+        if log_channel:
+            embed = discord.Embed(title=f"🔒 Ticket Gearchiveerd — {channel.name}", color=discord.Color.red())
+            embed.add_field(name="📂 Geopend door", value=self.opener.mention, inline=True)
+            embed.add_field(name="🔒 Gesloten door", value=closer.mention, inline=True)
+            file = discord.File(filename)
+            await log_channel.send(embed=embed, file=file)
+
+        if os.path.exists(filename):
+            os.remove(filename)
+
         await asyncio.sleep(5)
-        await kanaal.delete()
-
-class ProductSelect(ui.Select):
-    def __init__(self):
-        opties = [
-            discord.SelectOption(
-                label=p["naam"][:100],
-                description=f"{euro(p['prijs'])} - {p['omschrijving']}"[:100],
-                value=str(p["id"]),
-            )
-            for p in SHOP["producten"][:25]
-        ]
-        super().__init__(placeholder="Kies een product...", options=opties, custom_id="shop_select_persistent")
-
-    async def callback(self, interaction: discord.Interaction):
-        product = vind_product_id(int(self.values[0]))
-        if product is None:
-            await interaction.response.send_message("Dit product bestaat niet meer.", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            embed=product_embed(product), view=BestelKnop(product["id"]), ephemeral=True
-        )
-
-class ShopView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(ProductSelect())
-
-class BestelKnop(ui.View):
-    def __init__(self, product_id):
-        super().__init__(timeout=300)
-        self.product_id = product_id
-
-    @ui.button(label="Bestel dit product", emoji="🛒", style=discord.ButtonStyle.success)
-    async def bestel(self, interaction: discord.Interaction, button: ui.Button):
-        product = vind_product_id(self.product_id)
-        if product is None:
-            await interaction.response.send_message("Dit product bestaat niet meer.", ephemeral=True)
-            return
-        await maak_ticket(interaction, product)
-
-def overwrites_naar_data(kanaal):
-    data = []
-    for target, ow in kanaal.overwrites.items():
-        allow, deny = ow.pair()
-        data.append({
-            "id": target.id,
-            "kind": "role" if isinstance(target, discord.Role) else "member",
-            "allow": allow.value,
-            "deny": deny.value,
-        })
-    return data
-
-def data_naar_overwrites(guild, data):
-    resultaat = {}
-    for item in data:
-        target = guild.get_role(item["id"]) if item["kind"] == "role" else guild.get_member(item["id"])
-        if target is None:
-            continue
-        resultaat[target] = discord.PermissionOverwrite.from_pair(
-            discord.Permissions(item["allow"]), discord.Permissions(item["deny"])
-        )
-    return resultaat
-
-def maak_snapshot(guild, behoud_ids):
-    categorieen = []
-    for c in sorted(guild.categories, key=lambda c: c.position):
-        if c.id in behoud_ids:
-            continue
-        categorieen.append({"id": c.id, "name": c.name, "overwrites": overwrites_naar_data(c)})
-
-    kanalen = []
-    for ch in sorted(guild.channels, key=lambda c: c.position):
-        if isinstance(ch, discord.CategoryChannel) or ch.id in behoud_ids:
-            continue
-        item = {"name": ch.name, "category_id": ch.category_id, "overwrites": overwrites_naar_data(ch)}
-        if isinstance(ch, discord.StageChannel):
-            item["type"] = "stage"
-        elif isinstance(ch, discord.VoiceChannel):
-            item["type"] = "voice"
-            item["user_limit"] = ch.user_limit
-        elif isinstance(ch, discord.TextChannel):
-            item["type"] = "news" if ch.is_news() else "text"
-            item["topic"] = ch.topic
-            item["nsfw"] = ch.nsfw
-            item["slowmode"] = ch.slowmode_delay
-        elif isinstance(ch, discord.ForumChannel):
-            item["type"] = "forum"
-            item["topic"] = ch.topic
-        else:
-            continue
-        kanalen.append(item)
-
-    return {"categorieen": categorieen, "kanalen": kanalen}
-
-def shutdown_embed():
-    e = discord.Embed(
-        title="🔴 De server is gesloten",
-        description=f"Beste leden,\n\n**{SERVERNAAM}** is tijdelijk gesloten.",
-        colour=0xED4245,
-    )
-    e.set_footer(text=SERVERNAAM)
-    return e
-
-def startup_embed():
-    e = discord.Embed(
-        title="🟢 De server is weer open!",
-        description=f"Goed nieuws: **{SERVERNAAM}** is weer online!",
-        colour=0x57F287,
-    )
-    e.set_footer(text=SERVERNAAM)
-    return e
-
-async def voer_shutdown_uit(interaction: discord.Interaction):
-    guild = interaction.guild
-    mededeling = guild.get_channel(MEDEDELING_KANAAL_ID)
-
-    behoud = {mededeling.id} if mededeling else set()
-    if mededeling and mededeling.category_id:
-        behoud.add(mededeling.category_id)
-
-    snapshot = maak_snapshot(guild, behoud)
-    STATE_BESTAND.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    if mededeling:
-        await mededeling.send(
-            content="@everyone",
-            embed=shutdown_embed(),
-            allowed_mentions=discord.AllowedMentions(everyone=True),
-        )
-
-    teller, mislukt = 0, []
-    te_verwijderen = [c for c in guild.channels if c.id not in behoud]
-    te_verwijderen.sort(key=lambda c: isinstance(c, discord.CategoryChannel))
-    for ch in te_verwijderen:
         try:
-            await ch.delete(reason="Server shutdown")
-            teller += 1
-        except discord.HTTPException as err:
-            mislukt.append(f"{ch.name} ({err.text or 'fout'})")
-
-    tekst = f"✅ Shutdown klaar. {teller} kanalen verwijderd."
-    if mislukt:
-        tekst += "\n⚠️ Niet verwijderd: " + ", ".join(mislukt)
-    try:
-        await interaction.edit_original_response(content=tekst, view=None)
-    except discord.HTTPException:
-        pass
-
-class BevestigShutdown(ui.View):
-    def __init__(self, gebruiker_id):
-        super().__init__(timeout=60)
-        self.gebruiker_id = gebruiker_id
-
-    async def interaction_check(self, interaction: discord.Interaction):
-        if interaction.user.id != self.gebruiker_id:
-            await interaction.response.send_message("Dit is niet jouw bevestiging.", ephemeral=True)
-            return False
-        return True
-
-    @ui.button(label="Ja, sluit de server", emoji="🔴", style=discord.ButtonStyle.danger)
-    async def ja(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.edit_message(content="⏳ Shutdown bezig...", view=None)
-        await voer_shutdown_uit(interaction)
-
-    @ui.button(label="Annuleren", style=discord.ButtonStyle.secondary)
-    async def nee(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.edit_message(content="Geannuleerd.", view=None)
-
-def mag_shutdown(member) -> bool:
-    return any(rol.id == SHUTDOWN_ROL_ID for rol in member.roles)
-
-class FinnsBot(commands.Bot):
-    def __init__(self):
-        intents = discord.Intents.all()
-        super().__init__(command_prefix="!", intents=intents)
-
-    async def setup_hook(self):
-        self.add_view(VerificationView())
-        self.add_view(TicketKnop())
-        self.add_view(SluitKnop())
-        self.add_view(ShopView())
-        self.add_view(BetaalStartView())
-        
-        check_twee_wekelijkse_overzicht.start()
-
-bot = FinnsBot()
-
-@tasks.loop(hours=1)
-async def check_twee_wekelijkse_overzicht():
-    nu = datetime.now(timezone.utc)
-    if nu.weekday() == 6 and nu.hour == 12 and (nu.isocalendar().week % 2 == 0):
-        kanaal = bot.get_channel(WEEK_OVERZICHT_KANAAL_ID)
-        if kanaal:
-            guild = bot.get_guild(GUILD_ID)
-            totaal_leden = guild.member_count if guild else "Onbekend"
-            
-            e = discord.Embed(
-                title="📊 Twee-wekelijks Server Overzicht",
-                description=f"Overzicht van de afgelopen 2 weken in **{SERVERNAAM}**!",
-                color=KLEUR,
-                timestamp=nu
-            )
-            e.add_field(name="👋 Nieuwe Leden", value=f"**{WEEK_STATS['joins']}**", inline=True)
-            e.add_field(name="✅ Geverifieerd", value=f"**{WEEK_STATS['verificaties']}**", inline=True)
-            e.add_field(name="👥 Totaal Leden", value=f"**{totaal_leden}**", inline=True)
-            e.add_field(name="🛒 Nieuwe Bestellingen", value=f"**{WEEK_STATS['nieuwe_bestellingen']}**", inline=True)
-            e.add_field(name="🎉 Afgerond", value=f"**{WEEK_STATS['afgeronde_bestellingen']}**", inline=True)
-            e.set_footer(text=SERVERNAAM)
-
-            await kanaal.send(embed=e)
-
-            WEEK_STATS["joins"] = 0
-            WEEK_STATS["verificaties"] = 0
-            WEEK_STATS["nieuwe_bestellingen"] = 0
-            WEEK_STATS["afgeronde_bestellingen"] = 0
-            bewaar_stats(WEEK_STATS)
-
-@bot.event
-async def on_ready():
-    await bot.change_presence(activity=discord.Game(name="Bots verkopen | /help"))
-    print(f"🤖 Ingelogd als {bot.user} (ID: {bot.user.id})")
-    
-    try:
-        # Globale synchronisatie (werkt op al je servers zonder 403 Missing Access errors)
-        synced = await bot.tree.sync()
-        print(f"✅ Globale commando's succesvol gesynchroniseerd ({len(synced)} stuks).")
-    except Exception as e:
-        print(f"⚠️ Fout bij globaal synchroniseren in on_ready: {e}")
-        
-    print("--------------------------------------------------")
-
-@bot.event
-async def on_member_join(member: discord.Member):
-    WEEK_STATS["joins"] += 1
-    bewaar_stats(WEEK_STATS)
-
-    auto_rol = member.guild.get_role(AUTOMATIC_JOIN_ROLE_ID)
-    if auto_rol:
-        try:
-            await member.add_roles(auto_rol)
-        except discord.Forbidden:
+            await channel.delete()
+        except Exception:
             pass
 
-    welkom_kanaal = member.guild.get_channel(KANAAL_WELKOM_ID)
-    if welkom_kanaal:
-        e = discord.Embed(
-            title=f"👋 Welkom bij {member.guild.name}!",
-            description=(
-                f"Hoi {member.mention}, erg leuk dat je er bent!\n\n"
-                "• Verifieer jezelf in <#1557822033545527493>\n"
-                "• Bekijk de regels in <#1557822036154384457>\n"
-                "• Check de prijzen in <#1557822048279994458>\n"
-                "• Bestel een bot via <#1557822059646554194>"
-            ),
-            colour=KLEUR
-        )
-        if member.display_avatar:
-            e.set_thumbnail(url=member.display_avatar.url)
-        e.set_footer(text=f"{SERVERNAAM} • Lid #{len(member.guild.members)}")
-        
-        await welkom_kanaal.send(content=f"Welkom {member.mention}!", embed=e)
 
+class TicketCreateView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def create_ticket(self, interaction: discord.Interaction, ticket_type: str):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        member = interaction.user
+        category_name = f"{ticket_type} Tickets"
+        safe_name = ticket_type.lower().replace('+', '-plus').replace(' ', '-')
+        
+        existing = discord.utils.get(guild.text_channels, name=f"{safe_name}-{member.name.lower()}")
+        if existing:
+            await interaction.followup.send(f"❌ Je hebt al een open ticket: {existing.mention}", ephemeral=True)
+            return
+
+        category = discord.utils.get(guild.categories, name=category_name)
+        if not category:
+            try:
+                category = await guild.create_category(category_name)
+            except Exception:
+                pass
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            member: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True)
+        }
+
+        staff_role = guild.get_role(TICKET_ROLE_MAPPING.get(ticket_type))
+        if staff_role:
+            overwrites[staff_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+
+        ticket_channel = await guild.create_text_channel(
+            name=f"{safe_name}-{member.name}",
+            category=category,
+            overwrites=overwrites
+        )
+
+        embed = discord.Embed(
+            title=f"🎫 {ticket_type} Ticket",
+            description=f"Welkom {member.mention}! Stel hieronder je vraag.",
+            color=discord.Color.blue()
+        )
+        await ticket_channel.send(content=staff_role.mention if staff_role else "", embed=embed, view=TicketControlView(opener=member))
+        await interaction.followup.send(f"✅ Ticket aangemaakt: {ticket_channel.mention}", ephemeral=True)
+
+    @discord.ui.button(label="Support", style=discord.ButtonStyle.primary, emoji="🛠️", custom_id="btn_support_antiraid")
+    async def support(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "Support")
+
+    @discord.ui.button(label="Marketing", style=discord.ButtonStyle.primary, emoji="📈", custom_id="btn_marketing_antiraid")
+    async def marketing(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "Marketing")
+
+    @discord.ui.button(label="Management+", style=discord.ButtonStyle.primary, emoji="👑", custom_id="btn_management_antiraid")
+    async def management(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "Management+")
+
+    @discord.ui.button(label="Giveaway Claim", style=discord.ButtonStyle.success, emoji="🎉", custom_id="btn_giveaway_antiraid")
+    async def giveaway(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "Giveaway Claim")
+
+
+# ==========================================
+# OPSTARTEN & COMMANDS
+# ==========================================
 @bot.event
-async def on_member_remove(member: discord.Member):
-    welkom_kanaal = member.guild.get_channel(KANAAL_WELKOM_ID)
-    if not welkom_kanaal:
+async def on_ready():
+    print(f"✅ Ingelogd als {bot.user}!")
+    bot.add_view(VerificationView())
+    bot.add_view(TicketCreateView())
+    
+    try:
+        await bot.tree.sync()
+        print("🔗 Slash-commando's gesynchroniseerd.")
+    except Exception as e:
+        print(f"❌ Fout bij sync: {e}")
+
+
+# ==========================================
+# TELSYSTEEM & ANTI-RAID / AUTO-MODERATIE
+# ==========================================
+@bot.tree.command(name="telkanalsetup", description="Plaats de uitleg voor het telsysteem in het officiële telkanaal.")
+async def telkanalsetup(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Alleen beheerders kunnen dit instellen.", ephemeral=True)
         return
 
-    try:
-        async for message in welkom_kanaal.history(limit=100):
-            if message.author == bot.user:
-                if str(member.id) in message.content or (message.embeds and str(member.id) in message.embeds[0].description):
-                    await message.delete()
-                    break
-    except Exception:
-        pass
+    if interaction.channel.id != COUNTING_CHANNEL_ID:
+        await interaction.response.send_message(f"❌ Dit commando kan alleen worden gebruikt in het toegewezen telkanaal (<#{COUNTING_CHANNEL_ID}>).", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="🔢 Welkom bij het Telsysteem!",
+        description="Laten we samen zo ver mogelijk komen! Hier zijn de regels:\n\n"
+                    "• Typ om de beurt het volgende getal (1, 2, 3, 4...).<br>"
+                    "• Je mag **niet** twee keer achter elkaar hetzelfde getal sturen of twee keer achter elkaar tellen.<br>"
+                    "• Bij een goed getal krijg je een **✅**.<br>"
+                    "• Bij een fout getal of dubbel getal wordt de teller direct **gereset naar 1**!<br>"
+                    "• Let op: Als je echte tekst typt (chatten in plaats van getallen), krijg je een **mute van 5 minuten**!<br><br>"
+                    "Veel succes!",
+        color=discord.Color.from_rgb(241, 196, 15)
+    )
+    embed.set_footer(text="Prize Network • Telsysteem")
+    
+    await interaction.channel.send(embed=embed)
+    COUNTING_DATA[COUNTING_CHANNEL_ID] = {'current': 0, 'last_user': None}
+    await interaction.response.send_message("✅ Telsysteem succesvol ingesteld in dit kanaal!", ephemeral=True)
+
 
 @bot.event
 async def on_message(message: discord.Message):
-    if message.author.bot:
+    if message.author.bot or not message.guild:
         return
 
-    if isinstance(message.channel, discord.DMChannel):
-        user_id = message.author.id
-
-        if user_id in pending_pay_submissions:
-            data = pending_pay_submissions[user_id]
-
-            if data.get("status") == "SETUP":
-                if message.attachments:
-                    data["image_url"] = message.attachments[0].url
-                    await message.channel.send("📸 Afbeelding ontvangen! Klik hierboven op **'Afbeelding verstuurd'**.")
-                elif message.content:
-                    data["product"] = message.content
-                    await message.channel.send("📝 Productnaam opgeslagen! Klik hierboven op **'Bericht indienen'**.")
-
-            elif data.get("status") == "AWAITING_PAYMENT":
-                if message.content.strip().lower() == "betaald":
-                    confirm_channel = bot.get_channel(CHANNEL_BETAAL_CONFIRM)
-
-                    if confirm_channel:
-                        e = discord.Embed(
-                            title="💸 Betaling Gemeld",
-                            description=f"**Klant:** {message.author.mention} ({message.author.name})\n**Status:** Betaald gemeld in DM.",
-                            color=discord.Color.gold(),
-                            timestamp=datetime.now(timezone.utc)
-                        )
-                        e.add_field(name="Gevraagd Product", value=data.get("product", "Onbekend"), inline=False)
-                        if data.get("image_url"):
-                            e.set_thumbnail(url=data["image_url"])
-                        e.set_footer(text=SERVERNAAM)
-
-                        await confirm_channel.send(embed=e, view=BetaalConfirmView(message.author))
-                        await message.channel.send("✅ Bedankt! Je betalingsmelding is ontvangen en doorgestuurd naar ons team. Je ontvangt je bestelling zodra de betaling is geverifieerd!")
-                        data["status"] = "VERIFYING_PAYMENT"
-                    else:
-                        await message.channel.send("❌ Er is een probleem opgetreden met de kanaalinstelling van de server.")
+    # 1. ANTI-RAID & AUTO-MODERATIE (Links, NSFW, Tag Spam)
+    guild = message.guild
+    author = message.author
+    
+    # Check voor tags/mentions spam (5+ tags binnen 5 seconden)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if len(message.mentions) >= 5:
+        try:
+            await message.delete()
+            await author.timeout(datetime.timedelta(hours=24), reason="Anti-Raid: Mass mentions / Tag spam")
+            
+            log_chan = guild.get_channel(ANTIRAID_LOG_CHANNEL_ID)
+            if log_chan:
+                embed = discord.Embed(title="🚨 Anti-Raid Triggered (Tag Spam)", color=discord.Color.red(), timestamp=now)
+                embed.add_field(name="Gebruiker", value=f"{author.mention} (`{author.id}`)", inline=False)
+                embed.add_field(name="Bericht", value=message.content or "*Geen tekst*", inline=False)
+                view = ModerationActionView(target_member_id=author.id)
+                await log_chan.send(embed=embed, view=view)
+        except Exception:
+            pass
         return
+
+    # Check voor Links of mogelijke NSFW-inhoud (bijv. bijlagen met gevoelige inhoud of link-detectie)
+    has_link = "http://" in message.content or "https://www.discord.gg" in message.content or "discord.com/invite" in message.content or "https://" in message.content
+    has_nsfw_attachment = any(att.is_spoiler() or "nsfw" in att.filename.lower() for att in message.attachments)
+
+    if has_link or has_nsfw_attachment:
+        # Als de gebruiker geen administrator of medewerker is, grijpen we in
+        is_mod = author.guild_permissions.manage_messages or author.guild_permissions.administrator
+        if not is_mod:
+            try:
+                await message.delete()
+                await author.timeout(datetime.timedelta(hours=24), reason="Anti-Raid: Ongewenste link of NSFW inhoud gedetecteerd")
+                
+                log_chan = guild.get_channel(ANTIRAID_LOG_CHANNEL_ID)
+                if log_chan:
+                    embed = discord.Embed(title="🚨 Anti-Raid Triggered (Link / NSFW)", color=discord.Color.red(), timestamp=now)
+                    embed.add_field(name="Gebruiker", value=f"{author.mention} (`{author.id}`)", inline=False)
+                    embed.add_field(name="Verzonden inhoud", value=message.content or "*Bijlage / Media*", inline=False)
+                    embed.add_field(name="Kanaal", value=message.channel.mention, inline=False)
+                    view = ModerationActionView(target_member_id=author.id)
+                    await log_chan.send(embed=embed, view=view)
+            except Exception:
+                pass
+            return
+
+    # 2. TELSYSTEEM LOGICA
+    if message.channel.id == COUNTING_CHANNEL_ID:
+        data = COUNTING_DATA.setdefault(COUNTING_CHANNEL_ID, {'current': 0, 'last_user': None})
+        
+        try:
+            number = int(message.content.strip())
+        except ValueError:
+            data['current'] = 0
+            data['last_user'] = None
+            try:
+                await message.add_reaction("❌")
+                await message.channel.send(f"❌ {author.mention} maakte een fout (dat is geen geldig getal). Jullie waren bij **1**. Begin opnieuw vanaf **1**!")
+                await author.timeout(datetime.timedelta(minutes=5), reason="Gechat in telkanaal")
+            except Exception:
+                pass
+            await bot.process_commands(message)
+            return
+
+        expected_number = data['current'] + 1
+
+        if author.id == data['last_user']:
+            data['current'] = 0
+            data['last_user'] = None
+            try:
+                await message.add_reaction("❌")
+                await message.channel.send(f"❌ {author.mention} maakte een fout (je mag niet twee keer achter elkaar tellen). Jullie waren bij **1**. Begin opnieuw vanaf **1**!")
+            except Exception:
+                pass
+            await bot.process_commands(message)
+            return
+
+        if number == expected_number:
+            data['current'] = number
+            data['last_user'] = author.id
+            try:
+                await message.add_reaction("✅")
+            except Exception:
+                pass
+        else:
+            data['current'] = 0
+            data['last_user'] = None
+            try:
+                await message.add_reaction("❌")
+                await message.channel.send(f"❌ {author.mention} maakte een fout (verkeerd getal). Jullie waren bij **1**. Begin opnieuw vanaf **1**!")
+            except Exception:
+                pass
 
     await bot.process_commands(message)
 
-@bot.tree.command(name="help", description="Laat alle commands zien")
-async def help_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=help_embed(is_staff(interaction.user)), ephemeral=True)
 
-@bot.tree.command(name="giveaway", description="Start een winactie in het huidige kanaal (staff)")
-@app_commands.describe(
-    prijs="Wat kunnen mensen winnen?",
-    duur="Duur van de giveaway (bijv. 30s, 10m, 2h, 1d)",
-    winnaars="Aantal winnaars (standaard 1)"
-)
-async def giveaway_cmd(
-    interaction: discord.Interaction,
-    prijs: str,
-    duur: str,
-    winnaars: app_commands.Range[int, 1, 10] = 1
-):
-    if not await staff_check(interaction):
+# Paneel Commandos
+@bot.tree.command(name="verificatiepanelpost", description="Plaats het verificatiepaneel in dit kanaal.")
+async def verificatiepanelpost(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Alleen beheerders kunnen dit commando gebruiken.", ephemeral=True)
         return
 
-    seconden = verwerk_tijd(duur)
-    if seconden is None:
-        await interaction.response.send_message("❌ Ongeldige tijdsindeling! Gebruik bijv. `30s`, `10m`, `2h`, `1d`.", ephemeral=True)
-        return
-
-    eindtijd = datetime.now(timezone.utc) + timedelta(seconds=seconden)
-    timestamp_format = discord.utils.format_dt(eindtijd, style="R")
-
-    view = GiveawayView(prijs, eindtijd, winnaars)
-
-    e = discord.Embed(
-        title="🎉 GIVEAWAY!",
-        description=(
-            f"**Prijs:** {prijs}\n"
-            f"**Aantal winnaars:** {winnaars}\n"
-            f"**Georganiseerd door:** {interaction.user.mention}\n\n"
-            f"⏰ **Eindigt:** {timestamp_format}\n\n"
-            "Klik op de knop **Meedoen 🎉** hieronder om kans te maken!"
-        ),
-        color=0xFEE75C
+    embed = discord.Embed(
+        title="🔒 Server Verificatie",
+        description="Welkom op de server! Om volledige toegang te krijgen tot de kanalen, dien je jezelf te verifiëren door op onderstaande knop te klikken en de instructies te volgen.",
+        color=discord.Color.blue()
     )
-    e.set_footer(text=SERVERNAAM)
-
-    await interaction.response.send_message("✅ Giveaway gestart!", ephemeral=True)
-    msg = await interaction.channel.send(embed=e, view=view)
-
-    await asyncio.sleep(seconden)
-
-    for child in view.children:
-        child.disabled = True
-
-    if not view.deelnemers:
-        e.description = f"**Prijs:** {prijs}\n\n❌ **Giveaway afgelopen:** Er waren helaas geen deelnemers."
-        try:
-            await msg.edit(embed=e, view=view)
-        except Exception:
-            pass
-        await interaction.channel.send(f"❌ De giveaway voor **{prijs}** is afgelopen, maar er waren geen deelnemers.")
-    else:
-        aantal_gekozen = min(len(view.deelnemers), winnaars)
-        winnaars_ids = random.sample(list(view.deelnemers), aantal_gekozen)
-        winnaars_mentions = ", ".join([f"<@{uid}>" for uid in winnaars_ids])
-
-        e.description = (
-            f"**Prijs:** {prijs}\n"
-            f"**Winnaar(s):** {winnaars_mentions}\n\n"
-            "🎉 **Giveaway is afgelopen!**"
-        )
-        try:
-            await msg.edit(embed=e, view=view)
-        except Exception:
-            pass
-        await interaction.channel.send(f"🎉 Gefeliciteerd {winnaars_mentions}! Jullie hebben **{prijs}** gewonnen!")
-
-@bot.tree.command(name="betaalticket", description="Plaats het betaalpanel in het huidige kanaal (staff)")
-async def betaalticket_cmd(interaction: discord.Interaction):
-    if not await staff_check(interaction):
-        return
-
-    e = discord.Embed(
-        title="💳 Betaal Ticket Aanvragen",
-        description="Klik op de knop hieronder om een veilige betaalaanvraag te starten via DM!",
-        color=discord.Color.green()
-    )
-    e.set_footer(text=SERVERNAAM)
-    await interaction.channel.send(embed=e, view=BetaalStartView())
-    await interaction.response.send_message("✅ Betaalpanel geplaatst!", ephemeral=True)
-
-@bot.tree.command(name="bots", description="Bekijk de bots die we verkopen")
-async def bots_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=bots_embed())
-
-@bot.tree.command(name="prijzen", description="Bekijk de prijslijst")
-async def prijzen_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=prijzen_embed())
-
-@bot.tree.command(name="shop", description="Open de winkel en kies een product")
-async def shop_cmd(interaction: discord.Interaction):
-    if not SHOP["producten"]:
-        await interaction.response.send_message("De winkel is nog leeg!", ephemeral=True)
-        return
-    e = bots_embed("🛒 Winkel")
-    await interaction.response.send_message(embed=e, view=ShopView())
-
-@bot.tree.command(name="bestellen", description="Bestel een product (opent een privé ticket)")
-@app_commands.describe(product="Welk product wil je?", code="Heb je een kortingscode?")
-@app_commands.autocomplete(product=product_autocomplete)
-async def bestellen_cmd(interaction: discord.Interaction, product: str = None, code: str = None):
-    gekozen = None
-    if product:
-        gekozen = vind_product(product)
-        if gekozen is None:
-            await interaction.response.send_message("Dat product bestaat niet.", ephemeral=True)
-            return
-    await maak_ticket(interaction, gekozen, code)
-
-@bot.tree.command(name="kortingscodegebruik", description="Controleer of een kortingscode geldig is")
-@app_commands.describe(code="Voer de kortingscode in")
-async def kortingscodegebruik_cmd(interaction: discord.Interaction, code: str):
-    sleutel = code.strip().upper()
-    if sleutel in SHOP["kortingscodes"]:
-        procent = SHOP["kortingscodes"][sleutel]
-        await interaction.response.send_message(f"🎉 Code `{sleutel}` geeft **{procent}% korting**.", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"❌ Code `{sleutel}` is **ongeldig**.", ephemeral=True)
-
-@bot.tree.command(name="mijnbestellingen", description="Bekijk je eigen bestellingen")
-async def mijnbestellingen_cmd(interaction: discord.Interaction):
-    mijn = [b for b in SHOP["bestellingen"] if b["gebruiker_id"] == interaction.user.id]
-    if not mijn:
-        await interaction.response.send_message("Je hebt nog niets besteld.", ephemeral=True)
-        return
-    e = embed("📦 Jouw bestellingen")
-    for b in mijn[-10:]:
-        e.add_field(
-            name=f"{STATUS_ICOON[b['status']]} #{b['id']}  {b['product_naam']}",
-            value=f"{euro(b['prijs'])} • {b['status']}",
-            inline=False,
-        )
-    await interaction.response.send_message(embed=e, ephemeral=True)
-
-@bot.tree.command(name="review", description="Laat een review achter over onze service of bot")
-@app_commands.describe(sterren="Aantal sterren (1 t/m 5)", tekst="Je ervaring of beoordeling")
-async def review_cmd(
-    interaction: discord.Interaction,
-    sterren: app_commands.Range[int, 1, 5],
-    tekst: app_commands.Range[str, 5, 500],
-):
-    kanaal = interaction.guild.get_channel(KANAAL_REVIEWS_ID)
-    if kanaal is None:
-        kanaal = discord.utils.get(interaction.guild.text_channels, name="reviews")
-        
-    if kanaal is None:
-        await interaction.response.send_message("Het review-kanaal is niet gevonden.", ephemeral=True)
-        return
-
-    e = discord.Embed(
-        title="⭐" * sterren + "☆" * (5 - sterren) + " Review",
-        description=tekst,
-        colour=0xFEE75C,
-    )
-    e.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None)
-    e.set_footer(text=SERVERNAAM)
+    embed.set_footer(text="Beveiligingssysteem • Klik op de knop om te starten.")
     
-    await kanaal.send(embed=e)
-    await interaction.response.send_message("Bedankt voor je review! 💙", ephemeral=True)
+    await interaction.channel.send(embed=embed, view=VerificationView())
+    await interaction.response.send_message("✅ Het verificatiepaneel is succesvol geplaatst in dit kanaal.", ephemeral=True)
 
-@bot.tree.command(name="serverinfo", description="Info over deze server")
-async def serverinfo_cmd(interaction: discord.Interaction):
-    g = interaction.guild
-    e = embed(f"ℹ️ {g.name}")
-    e.add_field(name="Leden", value=str(g.member_count))
-    e.add_field(name="Kanalen", value=str(len(g.channels)))
-    e.add_field(name="Aangemaakt", value=discord.utils.format_dt(g.created_at, "D"))
-    if g.icon:
-        e.set_thumbnail(url=g.icon.url)
-    await interaction.response.send_message(embed=e)
+@bot.tree.command(name="ticketpanelpost", description="Plaats het ticketpaneel.")
+async def ticketpanelpost(interaction: discord.Interaction):
+    if TICKET_COMMAND_ROLE_ID not in [r.id for r in interaction.user.roles] and not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Geen rechten om dit paneel te plaatsen.", ephemeral=True)
+        return
+    embed = discord.Embed(title="🎫 Ticket Systeem", description="Kies hieronder een categorie om een ticket te openen.", color=discord.Color.purple())
+    await interaction.channel.send(embed=embed, view=TicketCreateView())
+    await interaction.response.send_message("✅ Ticketpaneel geplaatst.", ephemeral=True)
 
-@bot.tree.command(name="ping", description="Test hoe snel de bot reageert")
-async def ping_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(f"🏓 Pong! {round(bot.latency * 1000)} ms")
 
-@bot.tree.command(name="berichtbot", description="Stuur een bericht (en optioneel een afbeelding) als de bot (staff)")
-@app_commands.describe(
-    bericht="Het tekstbericht dat de bot moet sturen",
-    afbeelding="Upload optioneel een afbeelding die meegestuurd moet worden"
-)
-async def berichtbot_cmd(
-    interaction: discord.Interaction,
-    bericht: str,
-    afbeelding: discord.Attachment = None
-):
-    if not await staff_check(interaction):
-        return
+# ==========================================
+# EVENT LISTENERS (Logging & Welkom)
+# ==========================================
+@bot.event
+async def on_member_join(member: discord.Member):
+    guild = member.guild
+    unverified = guild.get_role(UNVERIFIED_ROLE_ID)
+    if unverified:
+        try:
+            await member.add_roles(unverified)
+        except Exception:
+            pass
 
-    bestand = None
-    if afbeelding:
-        bestand = await afbeelding.to_file()
+    welcome_channel = guild.get_channel(WELCOME_CHANNEL_ID)
+    if not welcome_channel:
+        try:
+            welcome_channel = await guild.fetch_channel(WELCOME_CHANNEL_ID)
+        except Exception:
+            welcome_channel = None
 
-    await interaction.channel.send(content=bericht, file=bestand)
-    await interaction.response.send_message("✅ Bericht succesvol verzonden!", ephemeral=True)
-
-@bot.tree.command(name="product_toevoegen", description="Voeg een product toe aan de winkel (staff)")
-@app_commands.describe(naam="Naam", omschrijving="Korte omschrijving", prijs="Prijs in euro")
-async def product_toevoegen_cmd(
-    interaction: discord.Interaction,
-    naam: app_commands.Range[str, 2, 80],
-    omschrijving: app_commands.Range[str, 2, 200],
-    prijs: app_commands.Range[float, 0.01, 100000.0],
-):
-    if not await staff_check(interaction):
-        return
-    if any(p["naam"].lower() == naam.lower() for p in SHOP["producten"]):
-        await interaction.response.send_message("Er is al een product met die naam.", ephemeral=True)
-        return
-    p = {"id": SHOP["volgend_product"], "naam": naam, "omschrijving": omschrijving, "prijs": round(prijs, 2)}
-    SHOP["volgend_product"] += 1
-    SHOP["producten"].append(p)
-    bewaar_shop()
-    await interaction.response.send_message("✅ Product toegevoegd:", embed=product_embed(p), ephemeral=True)
-
-@bot.tree.command(name="product_bewerken", description="Pas een product aan (staff)")
-@app_commands.describe(product="Welk product?", nieuwe_naam="Nieuwe naam", omschrijving="Nieuwe omschrijving", prijs="Nieuwe prijs")
-@app_commands.autocomplete(product=product_autocomplete)
-async def product_bewerken_cmd(
-    interaction: discord.Interaction,
-    product: str,
-    nieuwe_naam: app_commands.Range[str, 2, 80] = None,
-    omschrijving: app_commands.Range[str, 2, 200] = None,
-    prijs: app_commands.Range[float, 0.01, 100000.0] = None,
-):
-    if not await staff_check(interaction):
-        return
-    p = vind_product(product)
-    if p is None:
-        await interaction.response.send_message("Product niet gevonden.", ephemeral=True)
-        return
-    if nieuwe_naam:
-        p["naam"] = nieuwe_naam
-    if omschrijving:
-        p["omschrijving"] = omschrijving
-    if prijs:
-        p["prijs"] = round(prijs, 2)
-    bewaar_shop()
-    await interaction.response.send_message("✅ Product aangepast:", embed=product_embed(p), ephemeral=True)
-
-@bot.tree.command(name="product_verwijderen", description="Verwijder een product uit de winkel (staff)")
-@app_commands.describe(product="Welk product?")
-@app_commands.autocomplete(product=product_autocomplete)
-async def product_verwijderen_cmd(interaction: discord.Interaction, product: str):
-    if not await staff_check(interaction):
-        return
-    p = vind_product(product)
-    if p is None:
-        await interaction.response.send_message("Product niet gevonden.", ephemeral=True)
-        return
-    SHOP["producten"].remove(p)
-    bewaar_shop()
-    await interaction.response.send_message(f"🗑️ **{p['naam']}** is verwijderd.", ephemeral=True)
-
-@bot.tree.command(name="bestellingen", description="Bekijk alle open bestellingen (staff)")
-async def bestellingen_cmd(interaction: discord.Interaction):
-    if not await staff_check(interaction):
-        return
-    open_b = [b for b in SHOP["bestellingen"] if b["status"] == "open"]
-    if not open_b:
-        await interaction.response.send_message("Geen open bestellingen. 🎉", ephemeral=True)
-        return
-    e = embed(f"🟡 Open bestellingen ({len(open_b)})")
-    for b in open_b[:25]:
-        ticket = f"<#{b['ticket_kanaal_id']}>" if interaction.guild.get_channel(b["ticket_kanaal_id"]) else "gesloten"
-        e.add_field(
-            name=f"#{b['id']}  {b['product_naam']}",
-            value=f"<@{b['gebruiker_id']}> • {euro(b['prijs'])} • {ticket}",
-            inline=False,
+    if welcome_channel:
+        embed = discord.Embed(
+            title="✨ Welkom bij Prize Network! ✨",
+            description=f"Hallo {member.mention}, geweldig dat je er bent!\n\n"
+                        f"• Vergeet niet om jezelf te **verifiëren** om toegang te krijgen tot de server.\n"
+                        f"• Bekijk onze kanalen en doe gezellig mee.\n\n"
+                        f"We wensen je heel veel plezier hier!",
+            color=discord.Color.from_rgb(52, 152, 219),
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
         )
-    await interaction.response.send_message(embed=e, ephemeral=True)
-
-@bot.tree.command(name="afronden", description="Rond een bestelling af (staff)")
-@app_commands.describe(bestelling_id="Het nummer van de bestelling")
-async def afronden_cmd(interaction: discord.Interaction, bestelling_id: int):
-    if not await staff_check(interaction):
-        return
+        if member.display_avatar:
+            embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Je bent lid nummer {guild.member_count} • Veel succes!", icon_url=guild.icon.url if guild.icon else None)
         
-    await interaction.response.defer(ephemeral=True)
+        await welcome_channel.send(embed=embed)
 
-    b = vind_bestelling(bestelling_id)
-    if b is None:
-        await interaction.followup.send("Bestelling niet gevonden.", ephemeral=True)
-        return
-    if b["status"] != "open":
-        await interaction.followup.send(f"Deze bestelling is al {b['status']}.", ephemeral=True)
-        return
+    channel = await get_log_channel(guild, "leden")
+    if channel:
+        await channel.send(embed=discord.Embed(title="📥 Lid Binnengekomen", description=f"{member.mention} is gejoined.", color=discord.Color.green()))
 
-    guild = interaction.guild
-    b["status"] = "afgerond"
-    b["afgerond_door"] = interaction.user.id
-    bewaar_shop()
-
-    WEEK_STATS["afgeronde_bestellingen"] += 1
-    bewaar_stats(WEEK_STATS)
-
-    lid = guild.get_member(b["gebruiker_id"])
-    if not lid:
-        try:
-            lid = await guild.fetch_member(b["gebruiker_id"])
-        except Exception:
-            lid = None
-
-    klant_rol = guild.get_role(KLANT_ROL_ID)
-    if lid and klant_rol:
-        try:
-            await lid.add_roles(klant_rol)
-        except discord.Forbidden:
-            print("⚠️ Bot mist permissie 'Rollen beheren' om de Klant-rol toe te kennen!")
-        except Exception as e:
-            print(f"⚠️ Fout bij toekennen rol: {e}")
-
-    ticket = guild.get_channel(b["ticket_kanaal_id"])
-    if ticket:
-        try:
-            await ticket.send(f"✅ Bestelling **#{b['id']} ({b['product_naam']})** is afgerond!")
-        except Exception:
-            pass
-
-    await log_bestelling(guild, bestelling_embed(b, f"✅ Bestelling #{b['id']} afgerond door {interaction.user.display_name}"))
-    await interaction.followup.send(f"✅ Bestelling #{b['id']} is afgerond en de klantrol is toegekend.", ephemeral=True)
-
-@bot.tree.command(name="annuleren", description="Annuleer een bestelling (staff/klant)")
-@app_commands.describe(bestelling_id="Het nummer van de bestelling")
-async def annuleren_cmd(interaction: discord.Interaction, bestelling_id: int):
-    b = vind_bestelling(bestelling_id)
-    if b is None:
-        await interaction.response.send_message("Bestelling niet gevonden.", ephemeral=True)
-        return
-    if not (is_staff(interaction.user) or b["gebruiker_id"] == interaction.user.id):
-        await interaction.response.send_message("Je kunt alleen je eigen bestellingen annuleren.", ephemeral=True)
-        return
-    if b["status"] != "open":
-        await interaction.response.send_message(f"Deze bestelling is al {b['status']}.", ephemeral=True)
-        return
-    b["status"] = "geannuleerd"
-    bewaar_shop()
-    await log_bestelling(interaction.guild, bestelling_embed(b, f"🔴 Bestelling #{b['id']} geannuleerd door {interaction.user.display_name}"))
-    await interaction.response.send_message(f"🔴 Bestelling #{b['id']} is geannuleerd.", ephemeral=True)
-
-@bot.tree.command(name="kortingscode_maken", description="Maak een kortingscode (staff)")
-@app_commands.describe(code="De code", procent="Korting in procenten")
-async def kortingscode_maken_cmd(
-    interaction: discord.Interaction,
-    code: app_commands.Range[str, 3, 20],
-    procent: app_commands.Range[int, 1, 90],
-):
-    if not await staff_check(interaction):
-        return
-    sleutel = code.strip().upper()
-    SHOP["kortingscodes"][sleutel] = procent
-    bewaar_shop()
-    await interaction.response.send_message(f"✅ Code `{sleutel}` geeft **{procent}%** korting.", ephemeral=True)
-
-@bot.tree.command(name="kortingscode_verwijderen", description="Verwijder een kortingscode (staff)")
-@app_commands.describe(code="De code")
-async def kortingscode_verwijderen_cmd(interaction: discord.Interaction, code: str):
-    if not await staff_check(interaction):
-        return
-    sleutel = code.strip().upper()
-    if SHOP["kortingscodes"].pop(sleutel, None) is None:
-        await interaction.response.send_message("Die code bestaat niet.", ephemeral=True)
-        return
-    bewaar_shop()
-    await interaction.response.send_message(f"🗑️ Code `{sleutel}` is verwijderd.", ephemeral=True)
-
-@bot.tree.command(name="kortingscodes", description="Lijst van alle kortingscodes (staff)")
-async def kortingscodes_cmd(interaction: discord.Interaction):
-    if not await staff_check(interaction):
-        return
-    if not SHOP["kortingscodes"]:
-        await interaction.response.send_message("Er zijn geen kortingscodes.", ephemeral=True)
-        return
-    regels = "\n".join(f"`{c}`: {p}%" for c, p in SHOP["kortingscodes"].items())
-    await interaction.response.send_message(embed=embed("🏷️ Kortingscodes", regels), ephemeral=True)
-
-@bot.tree.command(name="shopstats", description="Omzet en populairste product (staff)")
-async def shopstats_cmd(interaction: discord.Interaction):
-    if not await staff_check(interaction):
-        return
-    alle = SHOP["bestellingen"]
-    afgerond = [b for b in alle if b["status"] == "afgerond"]
-    tellingen = {}
-    for b in afgerond:
-        tellingen[b["product_naam"]] = tellingen.get(b["product_naam"], 0) + 1
-    populair = max(tellingen, key=tellingen.get) if tellingen else "nog geen verkopen"
-
-    e = embed("📊 Shop-statistieken")
-    e.add_field(name="Omzet", value=euro(sum(b["prijs"] for b in afgerond)))
-    e.add_field(name="Afgerond", value=str(len(afgerond)))
-    e.add_field(name="Open", value=str(sum(b["status"] == "open" for b in alle)))
-    e.add_field(name="Geannuleerd", value=str(sum(b["status"] == "geannuleerd" for b in alle)))
-    e.add_field(name="Populairste product", value=populair, inline=False)
-    await interaction.response.send_message(embed=e, ephemeral=True)
-
-@bot.tree.command(name="shutdown", description="Server sluiten")
-async def shutdown_cmd(interaction: discord.Interaction):
-    if not mag_shutdown(interaction.user):
-        await interaction.response.send_message("Geen toestemming.", ephemeral=True)
-        return
-    await interaction.response.send_message(
-        "⚠️ **Weet je het zeker?** Alle kanalen worden verwijderd.",
-        view=BevestigShutdown(interaction.user.id),
-        ephemeral=True,
-    )
-
-@bot.tree.command(name="startup", description="Server openen")
-async def startup_cmd(interaction: discord.Interaction):
-    if not mag_shutdown(interaction.user):
-        await interaction.response.send_message("Geen toestemming.", ephemeral=True)
-        return
-    if not STATE_BESTAND.exists():
-        await interaction.response.send_message("Geen opgeslagen indeling gevonden.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True)
-    guild = interaction.guild
-    data = json.loads(STATE_BESTAND.read_text(encoding="utf-8"))
-
-    mapping = {}
-    for cat in data["categorieen"]:
-        nieuw = await guild.create_category(cat["name"], overwrites=data_naar_overwrites(guild, cat["overwrites"]))
-        mapping[cat["id"]] = nieuw
-
-    aantal = 0
-    for item in data["kanalen"]:
-        categorie = mapping.get(item["category_id"])
-        ow = data_naar_overwrites(guild, item["overwrites"])
-        naam = item["name"]
-        try:
-            soort = item["type"]
-            if soort in ("text", "news"):
-                await guild.create_text_channel(naam, category=categorie, overwrites=ow)
-            elif soort == "voice":
-                await guild.create_voice_channel(naam, category=categorie, overwrites=ow)
-            aantal += 1
-        except discord.HTTPException:
-            pass
-
-    STATE_BESTAND.unlink()
-    mededeling = guild.get_channel(MEDEDELING_KANAAL_ID)
-    if mededeling:
-        await mededeling.send(content="@everyone", embed=startup_embed(), allowed_mentions=discord.AllowedMentions(everyone=True))
-
-    await interaction.followup.send(f"✅ Startup klaar. {aantal} kanalen teruggezet.", ephemeral=True)
-
-@bot.tree.command(name="ban", description="Ban een gebruiker van de server.")
-@app_commands.checks.has_permissions(ban_members=True)
-async def ban_command(interaction: discord.Interaction, member: discord.Member, reason: str = "Geen reden opgegeven"):
-    await interaction.response.defer(ephemeral=True)
-    await member.ban(reason=reason)
-    await interaction.followup.send(f"Gebruiker {member.mention} is gebanned. Reden: {reason}", ephemeral=True)
-
-@bot.tree.command(name="kick", description="Kick een gebruiker uit de server.")
-@app_commands.checks.has_permissions(kick_members=True)
-async def kick_command(interaction: discord.Interaction, member: discord.Member, reason: str = "Geen reden opgegeven"):
-    await interaction.response.defer(ephemeral=True)
-    await member.kick(reason=reason)
-    await interaction.followup.send(f"Gebruiker {member.mention} is gekicked. Reden: {reason}", ephemeral=True)
-
-@bot.tree.command(name="clear", description="Verwijder berichten in het kanaal.")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def clear_command(interaction: discord.Interaction, amount: int):
-    await interaction.response.defer(ephemeral=True)
-    await interaction.channel.purge(limit=amount)
-    await interaction.followup.send(f"{amount} berichten verwijderd.", ephemeral=True)
-
-@bot.tree.command(name="purge", description="Verwijder berichten in het kanaal.")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def purge_command(interaction: discord.Interaction, amount: int):
-    await interaction.response.defer(ephemeral=True)
-    await interaction.channel.purge(limit=amount)
-    await interaction.followup.send(f"{amount} berichten verwijderd.", ephemeral=True)
+@bot.event
+async def on_member_remove(member: discord.Member):
+    channel = await get_log_channel(member.guild, "leden")
+    if channel:
+        await channel.send(embed=discord.Embed(title="📤 Lid Verlaten", description=f"{member.mention} heeft verlaten.", color=discord.Color.red()))
 
 bot.run(TOKEN)
