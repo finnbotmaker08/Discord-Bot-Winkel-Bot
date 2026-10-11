@@ -621,10 +621,14 @@ async def voer_shutdown_uit(interaction):
     behoud = {mededeling.id, mededeling.category_id} if mededeling else set()
     snapshot = maak_snapshot(guild, behoud)
     STATE_BESTAND.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
-    if mededeling: await mededeling.send("@everyone", embed=discord.Embed(title="🔴 Server gesloten", color=0xED4245))
+    if mededeling:
+        await mededeling.send("@everyone", embed=discord.Embed(title="🔴 Server gesloten", color=0xED4245))
     for ch in guild.channels:
         if ch.id not in behoud and not isinstance(ch, discord.CategoryChannel):
-            try: await ch.delete() except: pass
+            try:
+                await ch.delete()
+            except Exception:
+                pass
     await interaction.edit_original_response(content="✅ Shutdown voltooid.", view=None)
 
 class BevestigShutdown(ui.View):
